@@ -1,0 +1,26 @@
+<h2 mat-dialog-title class="conflict-title">
+  <mat-icon class="conflict-icon">warning</mat-icon>
+  {{ getConflictTitle() }}
+</h2>
+
+<mat-dialog-content class="conflict-content">
+  <div class="conflict-message">
+    {{ data.message }}
+  </div>
+  <div class="conflict-details" *ngIf="data.trainId || data.blockSectionId">
+    <div *ngIf="data.trainId">
+      <span class="label">列车:</span>
+      <span class="value">{{ data.trainId }}</span>
+    </div>
+    <div *ngIf="data.blockSectionId">
+      <span class="label">区间:</span>
+      <span class="value">{{ data.blockSectionId }}</span>
+    </div>
+  </div>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-raised-button color="primary" (click)="onClose()">
+    知道了
+  </button>
+</mat-dialog-actions>

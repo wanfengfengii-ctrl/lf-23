@@ -1,0 +1,41 @@
+.conflict-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d32f2f;
+}
+
+.conflict-icon {
+  font-size: 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.conflict-content {
+  padding: 16px 0;
+}
+
+.conflict-message {
+  font-size: 16px;
+  color: #333;
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #ffebee;
+  border-left: 4px solid #f44336;
+  border-radius: 4px;
+}
+
+.conflict-details {
+  display: flex;
+  gap: 24px;
+}
+
+.conflict-details .label {
+  color: #666;
+  margin-right: 8px;
+}
+
+.conflict-details .value {
+  font-weight: bold;
+  color: #333;
+}

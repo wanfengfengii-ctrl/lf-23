@@ -1,0 +1,45 @@
+.config-tabs {
+  height: 100%;
+}
+
+.tab-content {
+  padding: 12px 0;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.add-form h4 {
+  margin: 0 0 8px 0;
+  color: #3f51b5;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.item-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+h4 {
+  margin: 12px 0 8px 0;
+  color: #666;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+mat-divider {
+  margin: 12px 0;
+}
+
+::ng-deep .mat-mdc-tab-body-content {
+  overflow: hidden !important;
+}

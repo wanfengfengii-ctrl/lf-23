@@ -1,0 +1,27 @@
+<mat-toolbar color="primary" class="app-toolbar">
+  <span class="title">{{ title }}</span>
+  <span class="spacer"></span>
+  <button mat-button (click)="showConfigPanel = !showConfigPanel">
+    <mat-icon>{{ showConfigPanel ? 'chevron_right' : 'chevron_left' }}</mat-icon>
+    {{ showConfigPanel ? '隐藏配置' : '显示配置' }}
+  </button>
+</mat-toolbar>
+
+<div class="app-container">
+  <div class="main-area">
+    <div class="map-section">
+      <app-railway-map></app-railway-map>
+    </div>
+    <div class="timeline-section">
+      <app-timeline></app-timeline>
+    </div>
+    <div class="control-section">
+      <app-control-panel></app-control-panel>
+    </div>
+  </div>
+
+  <div class="config-panel" *ngIf="showConfigPanel">
+    <app-config-panel></app-config-panel>
+  </div>
+</div>
+

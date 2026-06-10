@@ -1,0 +1,196 @@
+<mat-tab-group class="config-tabs">
+  <mat-tab label="车站">
+    <div class="tab-content">
+      <div class="add-form">
+        <h4>添加车站</h4>
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>车站名称</mat-label>
+          <input matInput [(ngModel)]="newStationName" placeholder="输入车站名称">
+        </mat-form-field>
+        <button mat-raised-button color="primary" (click)="addStation()" [disabled]="!newStationName.trim()">
+          <mat-icon>add</mat-icon>
+          添加车站
+        </button>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <h4>车站列表 ({{ stations.length }})</h4>
+      <mat-list class="item-list">
+        <mat-list-item *ngFor="let station of stations">
+          <span matListItemTitle>{{ station.name }}</span>
+          <span matListItemLine>ID: {{ station.id }}</span>
+          <button mat-icon-button color="warn" matListItemMeta (click)="removeStation(station.id)">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </mat-list-item>
+      </mat-list>
+    </div>
+  </mat-tab>
+
+  <mat-tab label="区间">
+    <div class="tab-content">
+      <div class="add-form">
+        <h4>添加区间</h4>
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>区间名称</mat-label>
+          <input matInput [(ngModel)]="newBlockName" placeholder="输入区间名称">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>起点车站</mat-label>
+          <mat-select [(ngModel)]="newBlockFrom">
+            <mat-option *ngFor="let station of stations" [value]="station.id">
+              {{ station.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>终点车站</mat-label>
+          <mat-select [(ngModel)]="newBlockTo">
+            <mat-option *ngFor="let station of stations" [value]="station.id">
+              {{ station.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>区间长度</mat-label>
+          <input matInput type="number" [(ngModel)]="newBlockLength" min="50" max="1000">
+        </mat-form-field>
+
+        <button 
+          mat-raised-button 
+          color="primary" 
+          (click)="addBlockSection()"
+          [disabled]="!newBlockName.trim() || !newBlockFrom || !newBlockTo || newBlockFrom === newBlockTo"
+        >
+          <mat-icon>add</mat-icon>
+          添加区间
+        </button>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <h4>区间列表 ({{ blockSections.length }})</h4>
+      <mat-list class="item-list">
+        <mat-list-item *ngFor="let block of blockSections">
+          <span matListItemTitle>{{ block.name }}</span>
+          <span matListItemLine>
+            {{ getStationName(block.fromStationId) }} → {{ getStationName(block.toStationId) }}
+            | 长度: {{ block.length }}
+            | {{ block.isOccupied ? '🔴 占用' : '🟢 空闲' }}
+          </span>
+          <button mat-icon-button color="warn" matListItemMeta (click)="removeBlockSection(block.id)">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </mat-list-item>
+      </mat-list>
+    </div>
+  </mat-tab>
+
+  <mat-tab label="信号机">
+    <div class="tab-content">
+      <h4>信号机列表 ({{ signals.length }})</h4>
+      <mat-list class="item-list">
+        <mat-list-item *ngFor="let signal of signals">
+          <span matListItemTitle>
+            <span [style.color]="signal.state === 'clear' ? '#4caf50' : '#f44336'">
+              {{ signal.state === 'clear' ? '🟢' : '🔴' }}
+            </span>
+            {{ signal.name }}
+          </span>
+          <span matListItemLine>
+            状态: {{ signal.state === 'clear' ? '通行' : '停车' }}
+            | 位置: {{ signal.position === 'entry' ? '入口' : '出口' }}
+          </span>
+        </mat-list-item>
+      </mat-list>
+    </div>
+  </mat-tab>
+
+  <mat-tab label="列车调度">
+    <div class="tab-content">
+      <div class="add-form">
+        <h4>添加列车计划</h4>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>列车名称</mat-label>
+          <input matInput [(ngModel)]="newScheduleName" placeholder="输入列车名称">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>起点车站</mat-label>
+          <mat-select [(ngModel)]="newScheduleStartStation">
+            <mat-option *ngFor="let station of stations" [value]="station.id">
+              {{ station.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>终点车站</mat-label>
+          <mat-select [(ngModel)]="newScheduleEndStation">
+            <mat-option *ngFor="let station of stations" [value]="station.id">
+              {{ station.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>运行方向</mat-label>
+          <mat-select [(ngModel)]="newScheduleDirection">
+            <mat-option value="forward">正向</mat-option>
+            <mat-option value="backward">反向</mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>速度 (单位/秒)</mat-label>
+          <input matInput type="number" [(ngModel)]="newScheduleSpeed" min="10" max="200">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>出发时间 (秒)</mat-label>
+          <input matInput type="number" [(ngModel)]="newScheduleStartTime" min="0">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>列车颜色</mat-label>
+          <input matInput type="color" [(ngModel)]="newScheduleColor">
+        </mat-form-field>
+
+        <button 
+          mat-raised-button 
+          color="primary" 
+          (click)="addSchedule()"
+          [disabled]="!newScheduleName.trim() || !newScheduleStartStation || !newScheduleEndStation"
+        >
+          <mat-icon>add</mat-icon>
+          添加列车计划
+        </button>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <h4>列车计划 ({{ schedules.length }})</h4>
+      <mat-list class="item-list">
+        <mat-list-item *ngFor="let schedule of schedules">
+          <span matListItemTitle>
+            <span [style.color]="schedule.color" style="font-weight: bold;">●</span>
+            {{ schedule.name }}
+          </span>
+          <span matListItemLine>
+            {{ getStationName(schedule.startStationId) }} → {{ getStationName(schedule.endStationId) }}
+            | 出发: {{ schedule.startTime }}s
+            | 速度: {{ schedule.speed }}
+          </span>
+          <button mat-icon-button color="warn" matListItemMeta (click)="removeSchedule(schedule.trainId)">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </mat-list-item>
+      </mat-list>
+    </div>
+  </mat-tab>
+</mat-tab-group>

@@ -1,0 +1,49 @@
+<div class="control-panel">
+  <div class="left-controls">
+    <button mat-raised-button color="primary" (click)="onPlayPause()" [disabled]="state.conflictAlert && state.isRunning">
+      <mat-icon>
+        {{ state.isRunning && !state.isPaused ? 'pause' : 'play_arrow' }}
+      </mat-icon>
+      {{ state.isRunning && !state.isPaused ? '暂停' : '开始' }}
+    </button>
+
+    <button mat-raised-button (click)="onReset()">
+      <mat-icon>replay</mat-icon>
+      重置
+    </button>
+  </div>
+
+  <div class="time-display">
+    <span class="time-label">当前时间:</span>
+    <span class="time-value">{{ formatTime(state.currentTime) }}</span>
+    <span class="mode-badge" [ngClass]="{'live': state.mode === 'live', 'playback': state.mode === 'playback'}">
+      {{ state.mode === 'live' ? '实时模拟' : '回放模式' }}
+    </span>
+  </div>
+
+  <div class="right-controls">
+    <button mat-raised-button (click)="onSpeedChange()">
+      <mat-icon>speed</mat-icon>
+      {{ speedOptions[currentSpeedIndex] }}x 速度
+    </button>
+
+    <button 
+      mat-raised-button 
+      color="accent" 
+      (click)="onPlayback()"
+      [disabled]="state.mode === 'playback'"
+    >
+      <mat-icon>movie</mat-icon>
+      回放
+    </button>
+
+    <button 
+      mat-raised-button 
+      (click)="onLive()"
+      [disabled]="state.mode === 'live'"
+    >
+      <mat-icon>live_tv</mat-icon>
+      实时
+    </button>
+  </div>
+</div>
