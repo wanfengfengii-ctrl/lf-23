@@ -32,6 +32,12 @@ export class ConflictDialogComponent {
         return '线路不连通';
       case 'invalid_route':
         return '无效路径';
+      case 'conflicting_route':
+        return '敌对进路冲突';
+      case 'switch_locked':
+        return '道岔已锁闭';
+      case 'route_setup_failed':
+        return '进路排列失败';
       default:
         return '冲突警告';
     }

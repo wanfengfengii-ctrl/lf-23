@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { RailwayMapComponent } from './components/railway-map/railway-map.component';
 import { ControlPanelComponent } from './components/control-panel/control-panel.component';
 import { ConfigPanelComponent } from './components/config-panel/config-panel.component';
+import { DispatcherPanelComponent } from './components/dispatcher-panel/dispatcher-panel.component';
 import { TimelineComponent } from './components/timeline/timeline.component';
 import { SimulationService } from './services/simulation.service';
 
@@ -20,6 +21,7 @@ import { SimulationService } from './services/simulation.service';
     RailwayMapComponent,
     ControlPanelComponent,
     ConfigPanelComponent,
+    DispatcherPanelComponent,
     TimelineComponent,
   ],
   templateUrl: './app.component.html',
@@ -27,7 +29,7 @@ import { SimulationService } from './services/simulation.service';
   providers: [SimulationService],
 })
 export class AppComponent {
-  title = '铁路闭塞系统模拟器';
-  showConfigPanel = true;
+  title = '铁路人工闭塞高级仿真系统';
+  showConfigPanel = false;
+  showDispatcherPanel = true;
 }
-

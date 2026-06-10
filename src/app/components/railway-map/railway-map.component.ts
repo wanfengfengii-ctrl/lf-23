@@ -2,8 +2,16 @@ import { Component, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/co
 import { CommonModule } from '@angular/common';
 import * as d3 from 'd3';
 import { Subscription } from 'rxjs';
-import { Station, BlockSection, Signal, Train } from '../../models/railway.model';
+import {
+  Station,
+  BlockSection,
+  Signal,
+  Train,
+  Switch,
+  Route,
+} from '../../models/railway.model';
 import { RailwayDataService } from '../../services/railway-data.service';
+import { RouteControlService } from '../../services/route-control.service';
 
 @Component({
   selector: 'app-railway-map',
@@ -22,13 +30,18 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
   private blockSections: BlockSection[] = [];
   private signals: Signal[] = [];
   private trains: Train[] = [];
+  private switches: Switch[] = [];
+  private routes: Route[] = [];
 
   private subscriptions: Subscription[] = [];
 
   private width = 900;
   private height = 400;
 
-  constructor(private railwayDataService: RailwayDataService) {}
+  constructor(
+    private railwayDataService: RailwayDataService,
+    private routeControlService: RouteControlService
+  ) {}
 
   ngOnInit(): void {
     this.initSvg();
@@ -61,6 +74,20 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
         this.updateTrains();
       })
     );
+
+    this.subscriptions.push(
+      this.railwayDataService.switches$.subscribe(switches => {
+        this.switches = switches;
+        this.update();
+      })
+    );
+
+    this.subscriptions.push(
+      this.routeControlService.routes$.subscribe(routes => {
+        this.routes = routes;
+        this.update();
+      })
+    );
   }
 
   ngOnDestroy(): void {
@@ -72,7 +99,8 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
     this.width = container.clientWidth || 900;
     this.height = container.clientHeight || 400;
 
-    this.svg = d3.select(container)
+    this.svg = d3
+      .select(container)
       .append('svg')
       .attr('width', '100%')
       .attr('height', '100%')
@@ -81,16 +109,19 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
 
     this.g = this.svg.append('g');
 
+    this.g.append('g').attr('class', 'route-highlights');
     this.g.append('g').attr('class', 'block-sections');
+    this.g.append('g').attr('class', 'switches');
     this.g.append('g').attr('class', 'signals');
     this.g.append('g').attr('class', 'stations');
     this.g.append('g').attr('class', 'trains');
   }
 
   private setupZoom(): void {
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.5, 3])
-      .on('zoom', (event) => {
+      .on('zoom', event => {
         this.g.attr('transform', event.transform);
       });
 
@@ -98,18 +129,23 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
   }
 
   private update(): void {
+    this.updateRouteHighlights();
     this.updateBlockSections();
+    this.updateSwitches();
     this.updateStations();
     this.updateSignals();
+    this.updateTrains();
     this.fitView();
   }
 
   private fitView(): void {
     if (this.stations.length === 0) return;
 
-    const padding = 60;
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
+    const padding = 80;
+    let minX = Infinity,
+      minY = Infinity;
+    let maxX = -Infinity,
+      maxY = -Infinity;
 
     this.stations.forEach(station => {
       minX = Math.min(minX, station.x);
@@ -125,6 +161,13 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
       maxY = Math.max(maxY, signal.y);
     });
 
+    this.switches.forEach(sw => {
+      minX = Math.min(minX, sw.x);
+      minY = Math.min(minY, sw.y);
+      maxX = Math.max(maxX, sw.x);
+      maxY = Math.max(maxY, sw.y);
+    });
+
     const contentWidth = maxX - minX + padding * 2;
     const contentHeight = maxY - minY + padding * 2;
 
@@ -138,79 +181,215 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
     this.g.attr('transform', `translate(${offsetX}, ${offsetY}) scale(${scale})`);
   }
 
+  private updateRouteHighlights(): void {
+    const g = this.g.select('.route-highlights');
+    const activeRoutes = this.routes.filter(
+      r => r.state === 'setup' || r.state === 'locked' || r.state === 'used'
+    );
+
+    const highlights = g
+      .selectAll<SVGPathElement, Route>('.route-highlight')
+      .data(activeRoutes, d => d.id);
+
+    highlights.exit().remove();
+
+    const highlightsEnter = highlights
+      .enter()
+      .append('path')
+      .attr('class', 'route-highlight')
+      .attr('fill', 'none')
+      .attr('stroke-width', 20)
+      .attr('stroke-linecap', 'round')
+      .attr('opacity', 0.3);
+
+    const allHighlights = highlightsEnter.merge(highlights as any);
+
+    allHighlights
+      .attr('d', d => this.getRoutePath(d))
+      .attr('stroke', d => {
+        if (d.state === 'locked' || d.state === 'used') return '#f44336';
+        return '#4caf50';
+      });
+  }
+
+  private getRoutePath(route: Route): string {
+    if (route.blockSectionIds.length === 0) return '';
+
+    let path = '';
+    let isFirst = true;
+
+    for (const blockId of route.blockSectionIds) {
+      const block = this.blockSections.find(b => b.id === blockId);
+      if (!block) continue;
+
+      const fromStation = this.stations.find(s => s.id === block.fromStationId);
+      const toStation = this.stations.find(s => s.id === block.toStationId);
+
+      if (!fromStation || !toStation) continue;
+
+      if (isFirst) {
+        path += `M ${fromStation.x} ${fromStation.y}`;
+        isFirst = false;
+      }
+
+      path += ` L ${toStation.x} ${toStation.y}`;
+    }
+
+    return path;
+  }
+
   private updateBlockSections(): void {
     const g = this.g.select('.block-sections');
 
-    const blocks = g.selectAll<SVGLineElement, BlockSection>('.block-section')
+    const blocks = g
+      .selectAll<SVGGElement, BlockSection>('.block-section')
       .data(this.blockSections, d => d.id);
 
     blocks.exit().remove();
 
-    const blocksEnter = blocks.enter()
-      .append('g')
-      .attr('class', 'block-section');
+    const blocksEnter = blocks.enter().append('g').attr('class', 'block-section');
 
-    blocksEnter.append('line')
-      .attr('class', 'track')
-      .attr('stroke', '#9e9e9e')
-      .attr('stroke-width', 8)
-      .attr('stroke-linecap', 'round');
+    blocksEnter.append('line').attr('class', 'track').attr('stroke', '#9e9e9e').attr('stroke-width', 8).attr('stroke-linecap', 'round');
 
-    blocksEnter.append('line')
+    blocksEnter
+      .append('line')
       .attr('class', 'track-overlay')
       .attr('stroke', 'transparent')
       .attr('stroke-width', 20);
 
     const allBlocks = blocksEnter.merge(blocks as any);
 
-    allBlocks.select('.track')
+    allBlocks
+      .select('.track')
       .attr('x1', d => this.getStationById(d.fromStationId)?.x ?? 0)
       .attr('y1', d => this.getStationById(d.fromStationId)?.y ?? 0)
       .attr('x2', d => this.getStationById(d.toStationId)?.x ?? 0)
       .attr('y2', d => this.getStationById(d.toStationId)?.y ?? 0)
-      .attr('stroke', d => d.isOccupied ? '#f44336' : '#9e9e9e')
-      .attr('stroke-width', d => d.isOccupied ? 10 : 6);
+      .attr('stroke', d => {
+        if (d.isOccupied) return '#f44336';
+        if (d.isRouteLocked) return '#ff9800';
+        return '#9e9e9e';
+      })
+      .attr('stroke-width', d => (d.isOccupied ? 10 : 6));
 
-    allBlocks.select('.track-overlay')
+    allBlocks
+      .select('.track-overlay')
       .attr('x1', d => this.getStationById(d.fromStationId)?.x ?? 0)
       .attr('y1', d => this.getStationById(d.fromStationId)?.y ?? 0)
       .attr('x2', d => this.getStationById(d.toStationId)?.x ?? 0)
       .attr('y2', d => this.getStationById(d.toStationId)?.y ?? 0);
 
-    allBlocks.append('title')
-      .text(d => `${d.name} - ${d.isOccupied ? '占用' : '空闲'}`);
+    allBlocks.select('title').remove();
+    allBlocks
+      .append('title')
+      .text(
+        d =>
+          `${d.name} - ${d.isOccupied ? '占用' : d.isRouteLocked ? '进路锁闭' : '空闲'}`
+      );
+  }
+
+  private updateSwitches(): void {
+    const g = this.g.select('.switches');
+
+    const switchElements = g
+      .selectAll<SVGGElement, Switch>('.switch')
+      .data(this.switches, d => d.id);
+
+    switchElements.exit().remove();
+
+    const switchesEnter = switchElements
+      .enter()
+      .append('g')
+      .attr('class', 'switch')
+      .attr('cursor', 'pointer');
+
+    switchesEnter
+      .append('circle')
+      .attr('class', 'switch-base')
+      .attr('r', 12)
+      .attr('stroke', '#795548')
+      .attr('stroke-width', 2);
+
+    switchesEnter
+      .append('line')
+      .attr('class', 'switch-indicator')
+      .attr('stroke', '#795548')
+      .attr('stroke-width', 3)
+      .attr('stroke-linecap', 'round');
+
+    switchesEnter
+      .append('text')
+      .attr('class', 'switch-label')
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '9px')
+      .attr('fill', '#666');
+
+    const allSwitches = switchesEnter.merge(switchElements as any);
+
+    allSwitches.attr('transform', d => `translate(${d.x}, ${d.y})`);
+
+    allSwitches
+      .select('.switch-base')
+      .attr('fill', d => (d.isLocked ? '#ffcdd2' : '#efebe9'))
+      .attr('stroke', d => (d.isLocked ? '#f44336' : '#795548'));
+
+    allSwitches
+      .select('.switch-indicator')
+      .attr('x1', -8)
+      .attr('y1', 0)
+      .attr('x2', d => (d.position === 'normal' ? 8 : 8))
+      .attr('y2', d => (d.position === 'normal' ? 0 : -8))
+      .attr('stroke', d => (d.isLocked ? '#f44336' : '#795548'));
+
+    allSwitches
+      .select('.switch-label')
+      .attr('y', 24)
+      .text(d => d.name);
+
+    allSwitches.select('title').remove();
+    allSwitches
+      .append('title')
+      .text(
+        d =>
+          `${d.name} - ${d.position === 'normal' ? '定位' : '反位'}${d.isLocked ? ' (已锁闭)' : ''}`
+      );
   }
 
   private updateStations(): void {
     const g = this.g.select('.stations');
 
-    const stations = g.selectAll<SVGGElement, Station>('.station')
+    const stations = g
+      .selectAll<SVGGElement, Station>('.station')
       .data(this.stations, d => d.id);
 
     stations.exit().remove();
 
-    const stationsEnter = stations.enter()
+    const stationsEnter = stations
+      .enter()
       .append('g')
       .attr('class', 'station')
       .attr('cursor', 'pointer');
 
-    stationsEnter.append('circle')
-      .attr('r', 20)
+    stationsEnter
+      .append('circle')
+      .attr('r', 22)
       .attr('fill', '#fff')
       .attr('stroke', '#3f51b5')
       .attr('stroke-width', 3);
 
-    stationsEnter.append('text')
+    stationsEnter
+      .append('text')
       .attr('text-anchor', 'middle')
       .attr('dy', '0.35em')
       .attr('font-size', '12px')
       .attr('font-weight', 'bold')
       .attr('fill', '#3f51b5');
 
-    stationsEnter.append('text')
+    stationsEnter
+      .append('text')
       .attr('class', 'station-name')
       .attr('text-anchor', 'middle')
-      .attr('dy', '40px')
+      .attr('dy', '42px')
       .attr('font-size', '14px')
       .attr('fill', '#333');
 
@@ -218,89 +397,138 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
 
     allStations.attr('transform', d => `translate(${d.x}, ${d.y})`);
 
-    allStations.select('text:first-of-type')
+    allStations
+      .select('text:first-of-type')
       .text(d => d.name.charAt(0));
 
-    allStations.select('.station-name')
-      .text(d => d.name);
+    allStations.select('.station-name').text(d => d.name);
   }
 
   private updateSignals(): void {
     const g = this.g.select('.signals');
 
-    const signals = g.selectAll<SVGGElement, Signal>('.signal')
+    const signals = g
+      .selectAll<SVGGElement, Signal>('.signal')
       .data(this.signals, d => d.id);
 
     signals.exit().remove();
 
-    const signalsEnter = signals.enter()
-      .append('g')
-      .attr('class', 'signal');
+    const signalsEnter = signals.enter().append('g').attr('class', 'signal');
 
-    signalsEnter.append('line')
+    signalsEnter
+      .append('line')
       .attr('class', 'signal-pole')
       .attr('stroke', '#666')
       .attr('stroke-width', 2);
 
-    signalsEnter.append('circle')
+    signalsEnter
+      .append('circle')
       .attr('class', 'signal-light')
       .attr('r', 8)
       .attr('stroke', '#333')
       .attr('stroke-width', 2);
 
-    signalsEnter.append('text')
+    signalsEnter
+      .append('text')
       .attr('class', 'signal-name')
       .attr('text-anchor', 'middle')
       .attr('font-size', '10px')
       .attr('fill', '#666');
 
+    signalsEnter
+      .append('rect')
+      .attr('class', 'manual-indicator')
+      .attr('width', 16)
+      .attr('height', 8)
+      .attr('rx', 2)
+      .attr('fill', '#ff9800');
+
+    signalsEnter
+      .append('text')
+      .attr('class', 'manual-text')
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '6px')
+      .attr('fill', '#fff')
+      .attr('font-weight', 'bold')
+      .text('M');
+
     const allSignals = signalsEnter.merge(signals as any);
 
     allSignals.attr('transform', d => `translate(${d.x}, ${d.y})`);
 
-    allSignals.select('.signal-pole')
+    allSignals
+      .select('.signal-pole')
       .attr('x1', 0)
       .attr('y1', 0)
       .attr('x2', 0)
       .attr('y2', 25);
 
-    allSignals.select('.signal-light')
+    allSignals
+      .select('.signal-light')
       .attr('cx', 0)
       .attr('cy', 0)
-      .attr('fill', d => d.state === 'clear' ? '#4caf50' : '#f44336')
-      .attr('filter', d => d.state === 'clear' ? 'drop-shadow(0 0 4px #4caf50)' : 'drop-shadow(0 0 4px #f44336)');
+      .attr('fill', d => (d.state === 'clear' ? '#4caf50' : '#f44336'))
+      .attr(
+        'filter',
+        d =>
+          d.state === 'clear'
+            ? 'drop-shadow(0 0 6px #4caf50)'
+            : 'drop-shadow(0 0 6px #f44336)'
+      );
 
-    allSignals.select('.signal-name')
+    allSignals
+      .select('.signal-name')
       .attr('y', -15)
       .text(d => d.name);
+
+    allSignals
+      .select('.manual-indicator')
+      .attr('x', -8)
+      .attr('y', 10)
+      .attr('opacity', d => (d.isManualMode ? 1 : 0));
+
+    allSignals
+      .select('.manual-text')
+      .attr('y', 16)
+      .attr('opacity', d => (d.isManualMode ? 1 : 0));
+
+    allSignals.select('title').remove();
+    allSignals
+      .append('title')
+      .text(
+        d =>
+          `${d.name} - ${d.state === 'clear' ? '开放' : '关闭'}${d.isManualMode ? ' (人工模式)' : ''}`
+      );
   }
 
   private updateTrains(): void {
     const g = this.g.select('.trains');
 
-    const trains = g.selectAll<SVGGElement, Train>('.train')
+    const trains = g
+      .selectAll<SVGGElement, Train>('.train')
       .data(this.trains, d => d.id);
 
     trains.exit().remove();
 
-    const trainsEnter = trains.enter()
-      .append('g')
-      .attr('class', 'train');
+    const trainsEnter = trains.enter().append('g').attr('class', 'train');
 
-    trainsEnter.append('rect')
+    trainsEnter
+      .append('rect')
       .attr('class', 'train-body')
-      .attr('width', 30)
-      .attr('height', 16)
-      .attr('rx', 3)
+      .attr('width', 34)
+      .attr('height', 18)
+      .attr('rx', 4)
       .attr('stroke', '#333')
       .attr('stroke-width', 2);
 
-    trainsEnter.append('circle')
+    trainsEnter
+      .append('circle')
       .attr('class', 'train-window')
-      .attr('r', 4)
+      .attr('r', 5)
       .attr('fill', '#fff');
 
-    trainsEnter.append('text')
+    trainsEnter
+      .append('text')
       .attr('class', 'train-name')
       .attr('text-anchor', 'middle')
       .attr('font-size', '10px')
@@ -311,19 +539,17 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
 
     allTrains.attr('transform', d => {
       const pos = this.getTrainPosition(d);
-      return `translate(${pos.x - 15}, ${pos.y - 8})`;
+      return `translate(${pos.x - 17}, ${pos.y - 9})`;
     });
 
-    allTrains.select('.train-body')
-      .attr('fill', d => d.color);
+    allTrains.select('.train-body').attr('fill', d => d.color);
 
-    allTrains.select('.train-window')
-      .attr('cx', 15)
-      .attr('cy', 8);
+    allTrains.select('.train-window').attr('cx', 17).attr('cy', 9);
 
-    allTrains.select('.train-name')
-      .attr('x', 15)
-      .attr('y', -8)
+    allTrains
+      .select('.train-name')
+      .attr('x', 17)
+      .attr('y', -6)
       .text(d => d.name);
   }
 
@@ -331,7 +557,7 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
     if (train.currentStationId) {
       const station = this.getStationById(train.currentStationId);
       if (station) {
-        return { x: station.x, y: station.y - 30 };
+        return { x: station.x, y: station.y - 35 };
       }
     }
 
@@ -342,14 +568,15 @@ export class RailwayMapComponent implements OnInit, OnDestroy {
         const toStation = this.getStationById(block.toStationId);
 
         if (fromStation && toStation) {
-          const progress = train.direction === 'forward'
-            ? train.progress / block.length
-            : 1 - (train.progress / block.length);
+          const progress =
+            train.direction === 'forward'
+              ? train.progress / block.length
+              : 1 - train.progress / block.length;
 
           const x = fromStation.x + (toStation.x - fromStation.x) * progress;
           const y = fromStation.y + (toStation.y - fromStation.y) * progress;
 
-          return { x, y: y - 20 };
+          return { x, y: y - 25 };
         }
       }
     }

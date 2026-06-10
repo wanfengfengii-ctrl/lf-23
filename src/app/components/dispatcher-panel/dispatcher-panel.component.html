@@ -1,0 +1,196 @@
+<div class="dispatcher-panel">
+  <div class="panel-header">
+    <h3>调度操作台</h3>
+    <div class="station-selector">
+      <button
+        *ngFor="let station of stations"
+        class="station-btn"
+        [class.active]="selectedStationId === station.id"
+        (click)="selectedStationId = station.id"
+      >
+        {{ station.name }}
+      </button>
+    </div>
+  </div>
+
+  <mat-tab-group>
+    <mat-tab label="进路控制">
+      <div class="tab-content">
+        <div class="route-list">
+          <div
+            *ngFor="let route of getStationRoutes(selectedStationId)"
+            class="route-item"
+          >
+            <div class="route-info">
+              <span class="route-name">{{ route.name }}</span>
+              <span class="route-status" [ngClass]="getRouteStatusClass(route.state)">
+                {{ getRouteStatusText(route.state) }}
+              </span>
+            </div>
+            <div class="route-actions">
+              <button
+                mat-icon-button
+                color="primary"
+                (click)="onSetRoute(route.id)"
+                [disabled]="route.state !== 'idle'"
+                matTooltip="排列进路"
+              >
+                <mat-icon>play_arrow</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                color="warn"
+                (click)="onCancelRoute(route.id)"
+                [disabled]="route.state === 'idle' || route.state === 'locked' || route.state === 'used'"
+                matTooltip="取消进路"
+              >
+                <mat-icon>stop</mat-icon>
+              </button>
+            </div>
+            <div class="route-details" *ngIf="route.unlockTimer !== undefined">
+              解锁倒计时: {{ route.unlockTimer.toFixed(1) }}s
+            </div>
+          </div>
+          <div *ngIf="getStationRoutes(selectedStationId).length === 0" class="empty-state">
+            <mat-icon>info</mat-icon>
+            <span>该车站暂无进路配置</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="信号控制">
+      <div class="tab-content">
+        <div class="signal-list">
+          <div
+            *ngFor="let signal of getStationSignals(selectedStationId)"
+            class="signal-item"
+          >
+            <div class="signal-info">
+              <span class="signal-light" [class.clear]="signal.state === 'clear'"></span>
+              <span class="signal-name">{{ signal.name }}</span>
+              <span class="signal-type">{{ signal.signalType === 'home' ? '进站' : '出站' }}</span>
+            </div>
+            <div class="signal-actions">
+              <button
+                mat-raised-button
+                [color]="signal.state === 'clear' ? 'warn' : 'primary'"
+                (click)="onToggleSignal(signal.id)"
+              >
+                {{ signal.state === 'clear' ? '关闭信号' : '开放信号' }}
+              </button>
+              <span *ngIf="signal.isManualMode" class="manual-badge">人工</span>
+            </div>
+          </div>
+          <div *ngIf="getStationSignals(selectedStationId).length === 0" class="empty-state">
+            <mat-icon>info</mat-icon>
+            <span>该车站暂无信号机</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="道岔控制">
+      <div class="tab-content">
+        <div class="switch-list">
+          <div
+            *ngFor="let sw of getStationSwitches(selectedStationId)"
+            class="switch-item"
+          >
+            <div class="switch-info">
+              <mat-icon class="switch-icon">shuffle</mat-icon>
+              <span class="switch-name">{{ sw.name }}</span>
+              <span class="switch-position" [class.normal]="sw.position === 'normal'">
+                {{ sw.position === 'normal' ? '定位' : '反位' }}
+              </span>
+            </div>
+            <div class="switch-actions">
+              <button
+                mat-raised-button
+                color="primary"
+                (click)="onToggleSwitch(sw.id)"
+                [disabled]="sw.isLocked"
+              >
+                {{ sw.isLocked ? '已锁闭' : '转换道岔' }}
+              </button>
+            </div>
+            <div class="switch-status" *ngIf="sw.isLocked">
+              <span class="lock-indicator">
+                <mat-icon>lock</mat-icon>
+                进路锁闭
+              </span>
+            </div>
+          </div>
+          <div *ngIf="getStationSwitches(selectedStationId).length === 0" class="empty-state">
+            <mat-icon>info</mat-icon>
+            <span>该车站无道岔</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="闭塞请求">
+      <div class="tab-content">
+        <div class="request-list">
+          <div
+            *ngFor="let request of getPendingRequests()"
+            class="request-item"
+          >
+            <div class="request-info">
+              <span class="request-from">{{ getStationName(request.fromStationId) }}</span>
+              <mat-icon>arrow_forward</mat-icon>
+              <span class="request-to">{{ getStationName(request.toStationId) }}</span>
+            </div>
+            <div class="request-time">
+              {{ formatTime(request.timestamp) }}
+            </div>
+            <div class="request-actions">
+              <button
+                mat-raised-button
+                color="primary"
+                (click)="onConfirmRequest(request.id, true)"
+              >
+                同意
+              </button>
+              <button
+                mat-raised-button
+                color="warn"
+                (click)="onConfirmRequest(request.id, false)"
+              >
+                拒绝
+              </button>
+            </div>
+          </div>
+          <div *ngIf="getPendingRequests().length === 0" class="empty-state">
+            <mat-icon>check_circle</mat-icon>
+            <span>暂无待处理请求</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="操作日志">
+      <div class="tab-content">
+        <div class="action-log">
+          <div
+            *ngFor="let action of dispatcherActions"
+            class="log-item"
+          >
+            <div class="log-time">{{ formatTime(action.timestamp) }}</div>
+            <div class="log-icon">
+              <mat-icon>{{ getActionIcon(action.type) }}</mat-icon>
+            </div>
+            <div class="log-content">
+              <span class="log-type">{{ getActionTypeText(action.type) }}</span>
+              <span class="log-operator">{{ action.operator || '系统' }}</span>
+            </div>
+          </div>
+          <div *ngIf="dispatcherActions.length === 0" class="empty-state">
+            <mat-icon>history</mat-icon>
+            <span>暂无操作记录</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+  </mat-tab-group>
+</div>

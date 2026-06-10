@@ -1,16 +1,19 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { Train, BlockSection, Signal } from '../models/railway.model';
+import { Train, BlockSection, Signal, Switch, Route, DispatcherAction } from '../models/railway.model';
 
 export interface SimulationSnapshot {
   time: number;
   trains: Train[];
   blocks: BlockSection[];
   signals: Signal[];
+  switches?: Switch[];
+  routes?: Route[];
+  dispatcherActions?: DispatcherAction[];
 }
 
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class PlaybackService {
   private recordingSubject = new BehaviorSubject<SimulationSnapshot[]>([]);
@@ -28,7 +31,17 @@ export class PlaybackService {
       return;
     }
 
-    recording.push(snapshot);
+    recording.push({
+      ...snapshot,
+      trains: JSON.parse(JSON.stringify(snapshot.trains)),
+      blocks: JSON.parse(JSON.stringify(snapshot.blocks)),
+      signals: JSON.parse(JSON.stringify(snapshot.signals)),
+      switches: snapshot.switches ? JSON.parse(JSON.stringify(snapshot.switches)) : undefined,
+      routes: snapshot.routes ? JSON.parse(JSON.stringify(snapshot.routes)) : undefined,
+      dispatcherActions: snapshot.dispatcherActions
+        ? JSON.parse(JSON.stringify(snapshot.dispatcherActions))
+        : undefined,
+    });
     this.recordingSubject.next(recording);
   }
 
@@ -105,11 +118,19 @@ export class PlaybackService {
       };
     });
 
+    const upperTrainIds = new Set(upper.trains.map(t => t.id));
+    const newTrains = upper.trains.filter(t => !upperTrainIds.has(t.id) === false);
+    const lowerTrainIds = new Set(lower.trains.map(t => t.id));
+    const addedTrains = upper.trains.filter(t => !lowerTrainIds.has(t.id));
+
     return {
       time: lower.time + (upper.time - lower.time) * ratio,
-      trains,
+      trains: [...trains, ...addedTrains],
       blocks: upper.blocks,
       signals: upper.signals,
+      switches: upper.switches,
+      routes: upper.routes,
+      dispatcherActions: upper.dispatcherActions,
     };
   }
 
@@ -161,7 +182,7 @@ export class PlaybackService {
           events.push({
             time: curr.time,
             type: 'signal_change',
-            data: { signalId: currSignal.id, state: currSignal.state },
+            data: { signalId: currSignal.id, state: currSignal.state, isManual: currSignal.isManualMode },
           });
         }
       });
@@ -172,12 +193,57 @@ export class PlaybackService {
           events.push({
             time: curr.time,
             type: 'train_state_change',
-            data: { trainId: currTrain.id, state: currTrain.state },
+            data: { trainId: currTrain.id, state: currTrain.state, name: currTrain.name },
           });
         }
       });
+
+      if (prev.switches && curr.switches) {
+        prev.switches.forEach(prevSwitch => {
+          const currSwitch = curr.switches!.find(s => s.id === prevSwitch.id);
+          if (currSwitch && prevSwitch.position !== currSwitch.position) {
+            events.push({
+              time: curr.time,
+              type: 'switch_change',
+              data: { switchId: currSwitch.id, position: currSwitch.position, name: currSwitch.name },
+            });
+          }
+        });
+      }
+
+      if (prev.routes && curr.routes) {
+        prev.routes.forEach(prevRoute => {
+          const currRoute = curr.routes!.find(r => r.id === prevRoute.id);
+          if (currRoute && prevRoute.state !== currRoute.state) {
+            events.push({
+              time: curr.time,
+              type: 'route_state_change',
+              data: { routeId: currRoute.id, state: currRoute.state, name: currRoute.name },
+            });
+          }
+        });
+      }
     }
 
     return events;
+  }
+
+  exportRecording(): string {
+    const recording = this.recordingSubject.value;
+    return JSON.stringify(recording, null, 2);
+  }
+
+  importRecording(data: string): boolean {
+    try {
+      const recording = JSON.parse(data) as SimulationSnapshot[];
+      if (Array.isArray(recording) && recording.length > 0) {
+        this.recordingSubject.next(recording);
+        this.currentPlaybackIndex = 0;
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 }

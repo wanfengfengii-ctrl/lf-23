@@ -1,0 +1,297 @@
+.dispatcher-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 16px;
+  background: linear-gradient(135deg, #1976d2, #2196f3);
+  color: white;
+
+  h3 {
+    margin: 0 0 12px 0;
+    font-size: 18px;
+    font-weight: 500;
+  }
+}
+
+.station-selector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+
+  .station-btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    &.active {
+      background: white;
+      color: #1976d2;
+      font-weight: 500;
+    }
+  }
+}
+
+.tab-content {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.route-list,
+.signal-list,
+.switch-list,
+.request-list,
+.action-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-item,
+.signal-item,
+.switch-item,
+.request-item {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #eeeeee;
+  }
+}
+
+.route-info,
+.signal-info,
+.switch-info,
+.request-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.route-name,
+.signal-name,
+.switch-name,
+.request-from,
+.request-to {
+  font-weight: 500;
+  font-size: 14px;
+  color: #333;
+}
+
+.route-status {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+
+  &.status-idle {
+    background: #e0e0e0;
+    color: #666;
+  }
+
+  &.status-setup {
+    background: #c8e6c9;
+    color: #2e7d32;
+  }
+
+  &.status-locked {
+    background: #ffcdd2;
+    color: #c62828;
+  }
+
+  &.status-used {
+    background: #ffe0b2;
+    color: #e65100;
+  }
+
+  &.status-unlocking {
+    background: #b3e5fc;
+    color: #0277bd;
+  }
+}
+
+.route-actions,
+.signal-actions,
+.switch-actions,
+.request-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.route-details,
+.switch-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.signal-light {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f44336;
+  box-shadow: 0 0 4px rgba(244, 67, 54, 0.5);
+
+  &.clear {
+    background: #4caf50;
+    box-shadow: 0 0 4px rgba(76, 175, 80, 0.5);
+  }
+}
+
+.signal-type {
+  font-size: 11px;
+  color: #999;
+  padding: 2px 6px;
+  background: #e0e0e0;
+  border-radius: 4px;
+}
+
+.manual-badge {
+  font-size: 11px;
+  color: #ff9800;
+  font-weight: 500;
+}
+
+.switch-icon {
+  color: #795548;
+}
+
+.switch-position {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #e0e0e0;
+  color: #666;
+
+  &.normal {
+    background: #c8e6c9;
+    color: #2e7d32;
+  }
+}
+
+.lock-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #f44336;
+  font-size: 12px;
+
+  mat-icon {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.request-info {
+  justify-content: flex-start;
+
+  mat-icon {
+    color: #999;
+    font-size: 18px;
+  }
+}
+
+.request-time {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 8px;
+}
+
+.log-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border-left: 3px solid #2196f3;
+}
+
+.log-time {
+  font-size: 12px;
+  color: #999;
+  font-family: monospace;
+  min-width: 50px;
+}
+
+.log-icon {
+  color: #666;
+
+  mat-icon {
+    font-size: 20px;
+  }
+}
+
+.log-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-type {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.log-operator {
+  font-size: 11px;
+  color: #999;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: #999;
+
+  mat-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+  }
+
+  span {
+    font-size: 14px;
+  }
+}
+
+::ng-deep .mat-mdc-tab-group {
+  .mat-mdc-tab-header {
+    background: #fafafa;
+  }
+
+  .mat-mdc-tab-label-container {
+    padding: 0 8px;
+  }
+
+  .mdc-tab {
+    min-width: auto !important;
+    padding: 0 12px !important;
+  }
+}

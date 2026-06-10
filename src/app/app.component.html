@@ -1,8 +1,12 @@
 <mat-toolbar color="primary" class="app-toolbar">
   <span class="title">{{ title }}</span>
   <span class="spacer"></span>
+  <button mat-button (click)="showDispatcherPanel = !showDispatcherPanel">
+    <mat-icon>{{ showDispatcherPanel ? 'chevron_right' : 'chevron_left' }}</mat-icon>
+    {{ showDispatcherPanel ? '隐藏调度台' : '显示调度台' }}
+  </button>
   <button mat-button (click)="showConfigPanel = !showConfigPanel">
-    <mat-icon>{{ showConfigPanel ? 'chevron_right' : 'chevron_left' }}</mat-icon>
+    <mat-icon>settings</mat-icon>
     {{ showConfigPanel ? '隐藏配置' : '显示配置' }}
   </button>
 </mat-toolbar>
@@ -20,8 +24,12 @@
     </div>
   </div>
 
-  <div class="config-panel" *ngIf="showConfigPanel">
-    <app-config-panel></app-config-panel>
+  <div class="side-panels">
+    <div class="dispatcher-panel" *ngIf="showDispatcherPanel">
+      <app-dispatcher-panel></app-dispatcher-panel>
+    </div>
+    <div class="config-panel" *ngIf="showConfigPanel">
+      <app-config-panel></app-config-panel>
+    </div>
   </div>
 </div>
-

@@ -8,12 +8,17 @@ import {
   BlockSection,
   Signal,
   TrainSchedule,
+  Route,
+  Switch,
+  DispatcherAction,
+  BlockRequest,
 } from '../models/railway.model';
 import { RailwayDataService } from './railway-data.service';
 import { PlaybackService } from './playback.service';
+import { RouteControlService } from './route-control.service';
 
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class SimulationService implements OnDestroy {
   private stateSubject = new BehaviorSubject<SimulationState>({
@@ -28,11 +33,20 @@ export class SimulationService implements OnDestroy {
   private eventsSubject = new BehaviorSubject<SimulationEvent[]>([]);
   events$: Observable<SimulationEvent[]> = this.eventsSubject.asObservable();
 
+  private dispatcherActionsSubject = new BehaviorSubject<DispatcherAction[]>([]);
+  dispatcherActions$: Observable<DispatcherAction[]> = this.dispatcherActionsSubject.asObservable();
+
+  private blockRequestsSubject = new BehaviorSubject<BlockRequest[]>([]);
+  blockRequests$: Observable<BlockRequest[]> = this.blockRequestsSubject.asObservable();
+
   private simulationSubscription?: Subscription;
+  private nextActionId = 1;
+  private nextRequestId = 1;
 
   constructor(
     private railwayDataService: RailwayDataService,
-    private playbackService: PlaybackService
+    private playbackService: PlaybackService,
+    private routeControlService: RouteControlService
   ) {}
 
   ngOnDestroy(): void {
@@ -41,6 +55,18 @@ export class SimulationService implements OnDestroy {
 
   getState(): SimulationState {
     return this.stateSubject.value;
+  }
+
+  getEvents(): SimulationEvent[] {
+    return this.eventsSubject.value;
+  }
+
+  getDispatcherActions(): DispatcherAction[] {
+    return this.dispatcherActionsSubject.value;
+  }
+
+  getBlockRequests(): BlockRequest[] {
+    return this.blockRequestsSubject.value;
   }
 
   start(): void {
@@ -69,16 +95,82 @@ export class SimulationService implements OnDestroy {
 
   private initializeLiveSimulation(): void {
     this.railwayDataService.resetAll();
+    this.routeControlService.resetAll();
     this.eventsSubject.next([]);
+    this.dispatcherActionsSubject.next([]);
+    this.blockRequestsSubject.next([]);
     this.playbackService.clearRecording();
 
     const state = { ...this.stateSubject.value, currentTime: 0 };
     this.stateSubject.next(state);
 
+    this.initializeDefaultRoutes();
+
     const schedules = this.railwayDataService.getSchedules();
     schedules.forEach(schedule => {
       this.scheduleTrainStart(schedule);
     });
+  }
+
+  private initializeDefaultRoutes(): void {
+    const signals = this.railwayDataService.getSignals();
+    const stations = this.railwayDataService.getStations();
+
+    const routeConfigs = [
+      {
+        name: 'A→D 主线进路',
+        startSignalName: 'A出站信号',
+        endSignalName: 'D进站信号',
+        routeStations: ['S1', 'S2', 'S3', 'S4'],
+        direction: 'forward' as const,
+      },
+      {
+        name: 'A→E 支线进路',
+        startSignalName: 'A出站信号',
+        endSignalName: 'E进站信号',
+        routeStations: ['S1', 'S2', 'S5'],
+        direction: 'forward' as const,
+      },
+      {
+        name: 'D→E 联络进路',
+        startSignalName: 'C出站信号',
+        endSignalName: 'E进站信号',
+        routeStations: ['S3', 'S5'],
+        direction: 'backward' as const,
+      },
+      {
+        name: 'D→A 反向进路',
+        startSignalName: 'D进站信号',
+        endSignalName: 'A出站信号',
+        routeStations: ['S4', 'S3', 'S2', 'S1'],
+        direction: 'backward' as const,
+      },
+    ];
+
+    for (const config of routeConfigs) {
+      const startSignal = signals.find(s => s.name === config.startSignalName);
+      const endSignal = signals.find(s => s.name === config.endSignalName);
+
+      if (!startSignal || !endSignal) continue;
+
+      const path = this.railwayDataService.findPath(
+        config.routeStations[0],
+        config.routeStations[config.routeStations.length - 1],
+        config.routeStations
+      );
+
+      if (path) {
+        this.routeControlService.addRoute({
+          name: config.name,
+          startSignalId: startSignal.id,
+          endSignalId: endSignal.id,
+          blockSectionIds: path.blocks,
+          switchIds: path.switches.map(s => s.switchId),
+          switchPositions: path.switches,
+          direction: config.direction,
+        });
+      }
+    }
   }
 
   private scheduleTrainStart(schedule: TrainSchedule): void {
@@ -128,6 +220,8 @@ export class SimulationService implements OnDestroy {
     pendingEvents.sort((a, b) => a.timestamp - b.timestamp);
     pendingEvents.forEach(event => this.processEvent(event));
 
+    this.routeControlService.tickUnlock(deltaSeconds * state.speedMultiplier);
+
     this.updateTrains(deltaSeconds * state.speedMultiplier);
     this.updateSignals();
     this.checkConflicts();
@@ -138,6 +232,9 @@ export class SimulationService implements OnDestroy {
         trains: this.railwayDataService.getTrains(),
         blocks: this.railwayDataService.getBlockSections(),
         signals: this.railwayDataService.getSignals(),
+        switches: this.railwayDataService.getSwitches(),
+        routes: this.routeControlService.getRoutes(),
+        dispatcherActions: this.dispatcherActionsSubject.value,
       });
     }
   }
@@ -155,6 +252,7 @@ export class SimulationService implements OnDestroy {
       id: schedule.trainId,
       name: schedule.name,
       currentStationId: schedule.startStationId,
+      currentTrackId: schedule.startTrackId,
       progress: 0,
       direction: schedule.direction,
       speed: schedule.speed,
@@ -163,7 +261,52 @@ export class SimulationService implements OnDestroy {
     };
 
     this.railwayDataService.addTrainWithId(train);
-    this.tryMoveTrainToNextBlock(schedule.trainId);
+    this.trySetupRouteForTrain(schedule.trainId);
+  }
+
+  private trySetupRouteForTrain(trainId: string): boolean {
+    const trains = this.railwayDataService.getTrains();
+    const train = trains.find(t => t.id === trainId);
+    if (!train || train.state !== 'waiting' || !train.currentStationId) {
+      return false;
+    }
+
+    const schedules = this.railwayDataService.getSchedules();
+    const schedule = schedules.find(s => s.trainId === trainId);
+    if (!schedule) return false;
+
+    const routes = this.routeControlService.findRoutesForTrain(
+      train.currentStationId,
+      schedule.endStationId,
+      train.direction
+    );
+
+    const availableRoute = routes.find(r => r.state === 'idle');
+    if (!availableRoute) return false;
+
+    const result = this.routeControlService.setRoute(availableRoute.id);
+    if (!result.success) {
+      if (result.conflict) {
+        this.triggerConflict(result.conflict);
+      }
+      return false;
+    }
+
+    this.routeControlService.lockRouteForTrain(availableRoute.id, trainId);
+
+    train.currentRouteId = availableRoute.id;
+    this.railwayDataService.updateTrain(train);
+
+    const event: SimulationEvent = {
+      timestamp: this.stateSubject.value.currentTime,
+      type: 'route_setup',
+      data: { routeId: availableRoute.id, trainId, routeName: availableRoute.name },
+    };
+    this.addEvent(event);
+
+    this.tryMoveTrainToNextBlock(trainId);
+
+    return true;
   }
 
   private updateTrains(deltaSeconds: number): void {
@@ -198,11 +341,25 @@ export class SimulationService implements OnDestroy {
     const train = trains.find(t => t.id === trainId);
     if (!train) return;
 
-    const arrivalStationId = train.direction === 'forward'
-      ? block.toStationId
-      : block.fromStationId;
+    const arrivalStationId =
+      train.direction === 'forward' ? block.toStationId : block.fromStationId;
 
     this.freeBlock(block.id, trainId);
+
+    if (train.currentRouteId) {
+      const route = this.routeControlService.getRouteById(train.currentRouteId);
+      if (route && route.state === 'locked') {
+        this.routeControlService.markRouteUsed(train.currentRouteId);
+        this.routeControlService.startDelayedUnlock(train.currentRouteId, 3);
+
+        const event: SimulationEvent = {
+          timestamp: this.stateSubject.value.currentTime,
+          type: 'route_unlock',
+          data: { routeId: train.currentRouteId, trainId, delayed: true },
+        };
+        this.addEvent(event);
+      }
+    }
 
     const schedules = this.railwayDataService.getSchedules();
     const schedule = schedules.find(s => s.trainId === trainId);
@@ -212,6 +369,7 @@ export class SimulationService implements OnDestroy {
         ...train,
         currentStationId: arrivalStationId,
         currentBlockSectionId: undefined,
+        currentRouteId: undefined,
         progress: 0,
         state: 'completed',
       });
@@ -227,11 +385,12 @@ export class SimulationService implements OnDestroy {
         ...train,
         currentStationId: arrivalStationId,
         currentBlockSectionId: undefined,
+        currentRouteId: undefined,
         progress: 0,
         state: 'waiting',
       });
 
-      this.tryMoveTrainToNextBlock(trainId);
+      this.trySetupRouteForTrain(trainId);
     }
   }
 
@@ -242,15 +401,27 @@ export class SimulationService implements OnDestroy {
       return;
     }
 
-    const nextBlock = this.railwayDataService.getNextBlockSection(
-      train.currentStationId,
-      train.direction
-    );
+    if (!train.currentRouteId) {
+      const schedule = this.railwayDataService.getSchedules().find(s => s.trainId === trainId);
+      if (schedule) {
+        const routeSet = this.trySetupRouteForTrain(trainId);
+        if (!routeSet) return;
+      } else {
+        return;
+      }
+    }
 
+    const route = train.currentRouteId
+      ? this.routeControlService.getRouteById(train.currentRouteId)
+      : null;
+
+    const nextBlock = this.getNextBlockForTrain(train);
     if (!nextBlock) {
-      const stationName = this.railwayDataService.getStationById(train.currentStationId)?.name || train.currentStationId;
+      const stationName =
+        this.railwayDataService.getStationById(train.currentStationId)?.name ||
+        train.currentStationId;
       const conflict: ConflictAlert = {
-        message: `线路冲突：列车「${train.name}」在 ${stationName} 站找不到${train.direction === 'forward' ? '正向' : '反向'}可用线路`,
+        message: `线路冲突：列车「${train.name}」在 ${stationName} 站找不到可用线路`,
         type: 'invalid_route',
         trainId: trainId,
       };
@@ -262,11 +433,22 @@ export class SimulationService implements OnDestroy {
       ? this.railwayDataService.getSignalById(nextBlock.entrySignalId)
       : undefined;
 
-    if (entrySignal && entrySignal.state === 'stop') {
+    const exitSignal = nextBlock.exitSignalId
+      ? this.railwayDataService.getSignalById(nextBlock.exitSignalId)
+      : undefined;
+
+    const startSignal =
+      train.direction === 'forward' ? exitSignal : entrySignal;
+
+    if (startSignal && startSignal.state === 'stop') {
       return;
     }
 
     if (nextBlock.isOccupied) {
+      return;
+    }
+
+    if (!this.verifyRouteIntegrity(train)) {
       return;
     }
 
@@ -286,6 +468,77 @@ export class SimulationService implements OnDestroy {
       data: { trainId, blockId: nextBlock.id },
     };
     this.addEvent(event);
+  }
+
+  private getNextBlockForTrain(train: Train): BlockSection | undefined {
+    const blocks = this.railwayDataService.getBlockSections();
+    const switches = this.railwayDataService.getSwitches();
+
+    if (train.currentRouteId) {
+      const route = this.routeControlService.getRouteById(train.currentRouteId);
+      if (route) {
+        const currentBlockIndex = train.currentBlockSectionId
+          ? route.blockSectionIds.indexOf(train.currentBlockSectionId)
+          : -1;
+        const nextBlockId = route.blockSectionIds[currentBlockIndex + 1];
+
+        if (nextBlockId) {
+          return blocks.find(b => b.id === nextBlockId);
+        }
+      }
+    }
+
+    const stationSwitches = switches.filter(sw => sw.stationId === train.currentStationId);
+
+    if (train.direction === 'forward') {
+      const forwardBlocks = blocks.filter(b => b.fromStationId === train.currentStationId);
+
+      if (stationSwitches.length > 0) {
+        const sw = stationSwitches[0];
+        const targetBlockId =
+          sw.position === 'normal' ? sw.normalBlockId : sw.reverseBlockId;
+        return forwardBlocks.find(b => b.id === targetBlockId);
+      }
+
+      return forwardBlocks[0];
+    } else {
+      const backwardBlocks = blocks.filter(b => b.toStationId === train.currentStationId);
+
+      if (stationSwitches.length > 0) {
+        const sw = stationSwitches[0];
+        const targetBlockId =
+          sw.position === 'normal' ? sw.normalBlockId : sw.reverseBlockId;
+        return backwardBlocks.find(b => b.id === targetBlockId);
+      }
+
+      return backwardBlocks[0];
+    }
+  }
+
+  private verifyRouteIntegrity(train: Train): boolean {
+    if (!train.currentRouteId) return true;
+
+    const route = this.routeControlService.getRouteById(train.currentRouteId);
+    if (!route) return false;
+
+    const blocks = this.railwayDataService.getBlockSections();
+    const switches = this.railwayDataService.getSwitches();
+
+    for (const blockId of route.blockSectionIds) {
+      const block = blocks.find(b => b.id === blockId);
+      if (!block || block.isOccupied) {
+        return false;
+      }
+    }
+
+    for (const sp of route.switchPositions) {
+      const sw = switches.find(s => s.id === sp.switchId);
+      if (!sw || sw.position !== sp.position) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private occupyBlock(blockId: string, trainId: string): void {
@@ -329,15 +582,30 @@ export class SimulationService implements OnDestroy {
   private updateSignals(): void {
     const blocks = this.railwayDataService.getBlockSections();
     const signals = this.railwayDataService.getSignals();
+    const routes = this.routeControlService.getRoutes();
 
     signals.forEach(signal => {
+      if (signal.isManualMode) return;
+
       const block = blocks.find(b => b.id === signal.blockSectionId);
       if (!block) return;
 
+      const relatedRoute = routes.find(r => {
+        if (signal.position === 'exit' && r.startSignalId === signal.id) {
+          return r.state === 'setup' || r.state === 'locked';
+        }
+        if (signal.position === 'entry' && r.endSignalId === signal.id) {
+          return r.state === 'setup' || r.state === 'locked';
+        }
+        return false;
+      });
+
       let newState: 'clear' | 'stop' = 'stop';
 
-      if (signal.position === 'entry') {
-        newState = block.isOccupied ? 'stop' : 'clear';
+      if (relatedRoute) {
+        if (signal.position === 'exit' && relatedRoute.startSignalId === signal.id) {
+          newState = 'clear';
+        }
       }
 
       if (signal.state !== newState) {
@@ -404,11 +672,179 @@ export class SimulationService implements OnDestroy {
       data: conflict,
     };
     this.addEvent(event);
+
+    this.addDispatcherAction({
+      type: 'emergency_stop',
+      data: { reason: conflict.message, conflictType: conflict.type },
+      operator: 'system',
+    });
   }
 
   private addEvent(event: SimulationEvent): void {
     const events = [...this.eventsSubject.value, event];
     this.eventsSubject.next(events);
+  }
+
+  setRoute(routeId: string): { success: boolean; conflict?: ConflictAlert } {
+    const result = this.routeControlService.setRoute(routeId);
+
+    if (result.success) {
+      const event: SimulationEvent = {
+        timestamp: this.stateSubject.value.currentTime,
+        type: 'route_setup',
+        data: { routeId },
+      };
+      this.addEvent(event);
+
+      this.addDispatcherAction({
+        type: 'set_route',
+        data: { routeId },
+        operator: 'dispatcher',
+      });
+
+      this.checkWaitingTrains();
+    }
+
+    return result;
+  }
+
+  cancelRoute(routeId: string): boolean {
+    const success = this.routeControlService.cancelRoute(routeId);
+
+    if (success) {
+      const event: SimulationEvent = {
+        timestamp: this.stateSubject.value.currentTime,
+        type: 'route_cancel',
+        data: { routeId },
+      };
+      this.addEvent(event);
+
+      this.addDispatcherAction({
+        type: 'cancel_route',
+        data: { routeId },
+        operator: 'dispatcher',
+      });
+    }
+
+    return success;
+  }
+
+  setSignalManual(signalId: string, state: 'clear' | 'stop'): boolean {
+    const success = this.routeControlService.setSignalManual(signalId, state);
+
+    if (success) {
+      const event: SimulationEvent = {
+        timestamp: this.stateSubject.value.currentTime,
+        type: 'manual_signal',
+        data: { signalId, state },
+      };
+      this.addEvent(event);
+
+      this.addDispatcherAction({
+        type: 'manual_signal',
+        data: { signalId, state },
+        operator: 'dispatcher',
+      });
+
+      this.checkWaitingTrains();
+    }
+
+    return success;
+  }
+
+  setSwitchPosition(switchId: string, position: 'normal' | 'reverse'): boolean {
+    const sw = this.railwayDataService.getSwitchById(switchId);
+    if (!sw || sw.isLocked) return false;
+
+    this.railwayDataService.updateSwitch({
+      ...sw,
+      position,
+    });
+
+    const event: SimulationEvent = {
+      timestamp: this.stateSubject.value.currentTime,
+      type: 'switch_change',
+      data: { switchId, position, switchName: sw.name },
+    };
+    this.addEvent(event);
+
+    this.addDispatcherAction({
+      type: 'switch_position',
+      data: { switchId, position },
+      operator: 'dispatcher',
+    });
+
+    return true;
+  }
+
+  requestBlock(fromStationId: string, toStationId: string, trainId?: string): BlockRequest {
+    const request: BlockRequest = {
+      id: `REQ${this.nextRequestId++}`,
+      fromStationId,
+      toStationId,
+      trainId,
+      status: 'pending',
+      timestamp: this.stateSubject.value.currentTime,
+    };
+
+    const requests = [...this.blockRequestsSubject.value, request];
+    this.blockRequestsSubject.next(requests);
+
+    const event: SimulationEvent = {
+      timestamp: this.stateSubject.value.currentTime,
+      type: 'block_request',
+      data: { requestId: request.id, fromStationId, toStationId, trainId },
+    };
+    this.addEvent(event);
+
+    this.addDispatcherAction({
+      type: 'block_request',
+      data: { requestId: request.id, fromStationId, toStationId, trainId },
+      operator: 'station',
+    });
+
+    return request;
+  }
+
+  confirmBlockRequest(requestId: string, confirm: boolean): boolean {
+    const requests = this.blockRequestsSubject.value;
+    const request = requests.find(r => r.id === requestId);
+    if (!request || request.status !== 'pending') return false;
+
+    request.status = confirm ? 'confirmed' : 'rejected';
+    this.blockRequestsSubject.next([...requests]);
+
+    const event: SimulationEvent = {
+      timestamp: this.stateSubject.value.currentTime,
+      type: 'block_confirm',
+      data: { requestId, confirmed: confirm },
+    };
+    this.addEvent(event);
+
+    this.addDispatcherAction({
+      type: 'block_confirm',
+      data: { requestId, confirmed: confirm },
+      operator: 'dispatcher',
+    });
+
+    if (confirm && request.trainId) {
+      const train = this.railwayDataService.getTrainById(request.trainId);
+      if (train && train.state === 'waiting') {
+        this.tryMoveTrainToNextBlock(request.trainId);
+      }
+    }
+
+    return true;
+  }
+
+  private addDispatcherAction(action: Omit<DispatcherAction, 'id' | 'timestamp'>): void {
+    const newAction: DispatcherAction = {
+      ...action,
+      id: `ACT${this.nextActionId++}`,
+      timestamp: this.stateSubject.value.currentTime,
+    };
+    const actions = [...this.dispatcherActionsSubject.value, newAction];
+    this.dispatcherActionsSubject.next(actions);
   }
 
   pause(): void {
@@ -456,7 +892,10 @@ export class SimulationService implements OnDestroy {
   reset(): void {
     this.stop();
     this.railwayDataService.resetAll();
+    this.routeControlService.resetAll();
     this.eventsSubject.next([]);
+    this.dispatcherActionsSubject.next([]);
+    this.blockRequestsSubject.next([]);
 
     this.stateSubject.next({
       currentTime: 0,
@@ -491,6 +930,7 @@ export class SimulationService implements OnDestroy {
 
     this.stop();
     this.railwayDataService.resetAll();
+    this.routeControlService.resetAll();
 
     this.stateSubject.next({
       currentTime: 0,
@@ -502,6 +942,17 @@ export class SimulationService implements OnDestroy {
     });
 
     this.playbackService.seekTo(0);
+    const initialState = this.playbackService.getStateAtTime(0);
+    if (initialState) {
+      this.railwayDataService.setTrains(initialState.trains);
+      this.railwayDataService.setBlockSections(initialState.blocks);
+      this.railwayDataService.setSignals(initialState.signals);
+      if (initialState.switches) this.railwayDataService.setSwitches(initialState.switches);
+      if (initialState.routes) this.routeControlService.setRoutes(initialState.routes);
+      if (initialState.dispatcherActions)
+        this.dispatcherActionsSubject.next(initialState.dispatcherActions);
+    }
+
     this.startSimulationLoop();
   }
 
@@ -512,10 +963,13 @@ export class SimulationService implements OnDestroy {
     const recording = this.playbackService.getStateAtTime(newTime);
 
     if (recording) {
-      const { trains, blocks, signals } = recording;
+      const { trains, blocks, signals, switches, routes, dispatcherActions } = recording;
       this.railwayDataService.setTrains(trains);
       this.railwayDataService.setBlockSections(blocks);
       this.railwayDataService.setSignals(signals);
+      if (switches) this.railwayDataService.setSwitches(switches);
+      if (routes) this.routeControlService.setRoutes(routes);
+      if (dispatcherActions) this.dispatcherActionsSubject.next(dispatcherActions);
     }
 
     this.stateSubject.next({
@@ -543,6 +997,10 @@ export class SimulationService implements OnDestroy {
         this.railwayDataService.setTrains(recording.trains);
         this.railwayDataService.setBlockSections(recording.blocks);
         this.railwayDataService.setSignals(recording.signals);
+        if (recording.switches) this.railwayDataService.setSwitches(recording.switches);
+        if (recording.routes) this.routeControlService.setRoutes(recording.routes);
+        if (recording.dispatcherActions)
+          this.dispatcherActionsSubject.next(recording.dispatcherActions);
       }
     } else if (state.mode === 'live' && this.playbackService.hasRecording()) {
       const recording = this.playbackService.getStateAtTime(clampedTime);
@@ -550,6 +1008,10 @@ export class SimulationService implements OnDestroy {
         this.railwayDataService.setTrains(recording.trains);
         this.railwayDataService.setBlockSections(recording.blocks);
         this.railwayDataService.setSignals(recording.signals);
+        if (recording.switches) this.railwayDataService.setSwitches(recording.switches);
+        if (recording.routes) this.routeControlService.setRoutes(recording.routes);
+        if (recording.dispatcherActions)
+          this.dispatcherActionsSubject.next(recording.dispatcherActions);
       }
       this.stateSubject.next({
         ...state,
@@ -569,6 +1031,7 @@ export class SimulationService implements OnDestroy {
   switchToLive(): void {
     this.stop();
     this.railwayDataService.resetAll();
+    this.routeControlService.resetAll();
 
     this.stateSubject.next({
       currentTime: 0,

@@ -90,21 +90,132 @@
     </div>
   </mat-tab>
 
-  <mat-tab label="信号机">
+  <mat-tab label="道岔">
     <div class="tab-content">
-      <h4>信号机列表 ({{ signals.length }})</h4>
+      <div class="add-form">
+        <h4>添加道岔</h4>
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>道岔名称</mat-label>
+          <input matInput [(ngModel)]="newSwitchName" placeholder="输入道岔名称">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>所属车站</mat-label>
+          <mat-select [(ngModel)]="newSwitchStation">
+            <mat-option *ngFor="let station of stations" [value]="station.id">
+              {{ station.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>共用区段</mat-label>
+          <mat-select [(ngModel)]="newSwitchCommonBlock">
+            <mat-option *ngFor="let block of blockSections" [value]="block.id">
+              {{ block.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>定位区段</mat-label>
+          <mat-select [(ngModel)]="newSwitchNormalBlock">
+            <mat-option *ngFor="let block of blockSections" [value]="block.id">
+              {{ block.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>反位区段</mat-label>
+          <mat-select [(ngModel)]="newSwitchReverseBlock">
+            <mat-option *ngFor="let block of blockSections" [value]="block.id">
+              {{ block.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <button 
+          mat-raised-button 
+          color="primary" 
+          (click)="addSwitch()"
+          [disabled]="!newSwitchName.trim() || !newSwitchStation || !newSwitchCommonBlock || !newSwitchNormalBlock || !newSwitchReverseBlock"
+        >
+          <mat-icon>add</mat-icon>
+          添加道岔
+        </button>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <h4>道岔列表 ({{ switches.length }})</h4>
       <mat-list class="item-list">
-        <mat-list-item *ngFor="let signal of signals">
-          <span matListItemTitle>
-            <span [style.color]="signal.state === 'clear' ? '#4caf50' : '#f44336'">
-              {{ signal.state === 'clear' ? '🟢' : '🔴' }}
-            </span>
-            {{ signal.name }}
-          </span>
+        <mat-list-item *ngFor="let sw of switches">
+          <span matListItemTitle>{{ sw.name }}</span>
           <span matListItemLine>
-            状态: {{ signal.state === 'clear' ? '通行' : '停车' }}
-            | 位置: {{ signal.position === 'entry' ? '入口' : '出口' }}
+            位置: {{ sw.position === 'normal' ? '定位' : '反位' }}
+            | {{ sw.isLocked ? '� 已锁闭' : '� 空闲' }}
           </span>
+          <button mat-icon-button color="warn" matListItemMeta (click)="removeSwitch(sw.id)">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </mat-list-item>
+      </mat-list>
+    </div>
+  </mat-tab>
+
+  <mat-tab label="进路">
+    <div class="tab-content">
+      <div class="add-form">
+        <h4>添加进路</h4>
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>进路名称</mat-label>
+          <input matInput [(ngModel)]="newRouteName" placeholder="输入进路名称">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>起始信号机</mat-label>
+          <mat-select [(ngModel)]="newRouteStartSignal">
+            <mat-option *ngFor="let signal of signals" [value]="signal.id">
+              {{ signal.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>终到信号机</mat-label>
+          <mat-select [(ngModel)]="newRouteEndSignal">
+            <mat-option *ngFor="let signal of signals" [value]="signal.id">
+              {{ signal.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <button 
+          mat-raised-button 
+          color="primary" 
+          (click)="addRoute()"
+          [disabled]="!newRouteName.trim() || !newRouteStartSignal || !newRouteEndSignal"
+        >
+          <mat-icon>add</mat-icon>
+          添加进路
+        </button>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <h4>进路列表 ({{ routes.length }})</h4>
+      <mat-list class="item-list">
+        <mat-list-item *ngFor="let route of routes">
+          <span matListItemTitle>{{ route.name }}</span>
+          <span matListItemLine>
+            区段数: {{ route.blockSectionIds.length }}
+            | 道岔数: {{ route.switchIds.length }}
+            | 状态: {{ route.state }}
+          </span>
+          <button mat-icon-button color="warn" matListItemMeta (click)="removeRoute(route.id)">
+            <mat-icon>delete</mat-icon>
+          </button>
         </mat-list-item>
       </mat-list>
     </div>
