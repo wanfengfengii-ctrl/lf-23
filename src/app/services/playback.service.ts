@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { Train, BlockSection, Signal, Switch, Route, DispatcherAction } from '../models/railway.model';
+import { Train, BlockSection, Signal, Switch, Route, DispatcherAction, FaultSimulationState } from '../models/railway.model';
 
 export interface SimulationSnapshot {
   time: number;
@@ -10,6 +10,7 @@ export interface SimulationSnapshot {
   switches?: Switch[];
   routes?: Route[];
   dispatcherActions?: DispatcherAction[];
+  faultState?: FaultSimulationState;
 }
 
 @Injectable({
@@ -40,6 +41,9 @@ export class PlaybackService {
       routes: snapshot.routes ? JSON.parse(JSON.stringify(snapshot.routes)) : undefined,
       dispatcherActions: snapshot.dispatcherActions
         ? JSON.parse(JSON.stringify(snapshot.dispatcherActions))
+        : undefined,
+      faultState: snapshot.faultState
+        ? JSON.parse(JSON.stringify(snapshot.faultState))
         : undefined,
     });
     this.recordingSubject.next(recording);
@@ -131,6 +135,7 @@ export class PlaybackService {
       switches: upper.switches,
       routes: upper.routes,
       dispatcherActions: upper.dispatcherActions,
+      faultState: upper.faultState,
     };
   }
 
@@ -222,6 +227,132 @@ export class PlaybackService {
             });
           }
         });
+      }
+
+      if (prev.faultState && curr.faultState) {
+        const prevFaults = prev.faultState.faults || [];
+        const currFaults = curr.faultState.faults || [];
+
+        currFaults.forEach(currFault => {
+          const prevFault = prevFaults.find(f => f.id === currFault.id);
+          if (!prevFault) {
+            events.push({
+              time: curr.time,
+              type: 'fault_trigger',
+              data: {
+                faultId: currFault.id,
+                faultType: currFault.type,
+                targetName: currFault.targetName,
+                severity: currFault.severity,
+                description: currFault.description,
+              },
+            });
+          } else if (prevFault.status !== currFault.status) {
+            events.push({
+              time: curr.time,
+              type: `fault_${currFault.status}`,
+              data: {
+                faultId: currFault.id,
+                faultType: currFault.type,
+                targetName: currFault.targetName,
+                fromStatus: prevFault.status,
+                toStatus: currFault.status,
+              },
+            });
+          }
+        });
+
+        const prevBlocked = (prev.faultState.blockedSections || []).map(bs => bs.blockSectionId + '_' + bs.faultId).sort();
+        const currBlocked = (curr.faultState.blockedSections || []).map(bs => bs.blockSectionId + '_' + bs.faultId).sort();
+        if (JSON.stringify(prevBlocked) !== JSON.stringify(currBlocked)) {
+          const prevSet = new Set(prevBlocked);
+          const currSet = new Set(currBlocked);
+
+          (curr.faultState.blockedSections || []).forEach(bs => {
+            const key = bs.blockSectionId + '_' + bs.faultId;
+            if (!prevSet.has(key)) {
+              events.push({
+                time: curr.time,
+                type: 'block_section_fault',
+                data: { blockSectionId: bs.blockSectionId, faultId: bs.faultId },
+              });
+            }
+          });
+
+          (prev.faultState.blockedSections || []).forEach(bs => {
+            const key = bs.blockSectionId + '_' + bs.faultId;
+            if (!currSet.has(key)) {
+              events.push({
+                time: curr.time,
+                type: 'unblock_section_fault',
+                data: { blockSectionId: bs.blockSectionId, faultId: bs.faultId },
+              });
+            }
+          });
+        }
+
+        const prevSpeeds = (prev.faultState.speedRestrictions || []).map(sr => sr.blockSectionId).sort();
+        const currSpeeds = (curr.faultState.speedRestrictions || []).map(sr => sr.blockSectionId).sort();
+        if (JSON.stringify(prevSpeeds) !== JSON.stringify(currSpeeds)) {
+          const prevSpeedSet = new Set(prevSpeeds);
+          const currSpeedSet = new Set(currSpeeds);
+
+          (curr.faultState.speedRestrictions || []).forEach(sr => {
+            if (!prevSpeedSet.has(sr.blockSectionId)) {
+              events.push({
+                time: curr.time,
+                type: 'speed_restriction',
+                data: { blockSectionId: sr.blockSectionId, maxSpeed: sr.maxSpeed },
+              });
+            }
+          });
+
+          (prev.faultState.speedRestrictions || []).forEach(sr => {
+            if (!currSpeedSet.has(sr.blockSectionId)) {
+              events.push({
+                time: curr.time,
+                type: 'lift_speed_restriction',
+                data: { blockSectionId: sr.blockSectionId },
+              });
+            }
+          });
+        }
+
+        const prevActions = (prev.faultState.faultActions || []).map(a => a.id);
+        const currActions = (curr.faultState.faultActions || []).map(a => a.id);
+        const prevActionSet = new Set(prevActions);
+        (curr.faultState.faultActions || []).forEach(action => {
+          if (!prevActionSet.has(action.id)) {
+            events.push({
+              time: curr.time,
+              type: action.type,
+              data: {
+                actionId: action.id,
+                faultId: action.faultId,
+                operator: action.operator,
+                details: action.data,
+              },
+            });
+          }
+        });
+
+        const prevLogCount = (prev.faultState.emergencyLog || []).length;
+        const currLogCount = (curr.faultState.emergencyLog || []).length;
+        if (currLogCount > prevLogCount) {
+          const newLogs = (curr.faultState.emergencyLog || []).slice(prevLogCount);
+          newLogs.forEach(log => {
+            events.push({
+              time: curr.time,
+              type: 'emergency_log',
+              data: {
+                logId: log.id,
+                category: log.category,
+                message: log.message,
+                operator: log.operator,
+              },
+            });
+          });
+        }
       }
     }
 

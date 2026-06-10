@@ -38,6 +38,10 @@ export class ConflictDialogComponent {
         return '道岔已锁闭';
       case 'route_setup_failed':
         return '进路排列失败';
+      case 'fault_violation':
+        return '故障安全违规';
+      case 'sequence_violation':
+        return '处置顺序违规';
       default:
         return '冲突警告';
     }
@@ -51,6 +55,10 @@ export class ConflictDialogComponent {
         return 'block';
       case 'no_connection':
         return 'link_off';
+      case 'fault_violation':
+        return 'error';
+      case 'sequence_violation':
+        return 'report_problem';
       default:
         return 'error';
     }

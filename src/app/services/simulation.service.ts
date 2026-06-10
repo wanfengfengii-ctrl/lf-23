@@ -12,10 +12,13 @@ import {
   Switch,
   DispatcherAction,
   BlockRequest,
+  FaultSimulationState,
+  FaultType,
 } from '../models/railway.model';
 import { RailwayDataService } from './railway-data.service';
 import { PlaybackService } from './playback.service';
 import { RouteControlService } from './route-control.service';
+import { FaultSimulationService } from './fault-simulation.service';
 
 @Injectable({
   providedIn: 'root',
@@ -46,7 +49,8 @@ export class SimulationService implements OnDestroy {
   constructor(
     private railwayDataService: RailwayDataService,
     private playbackService: PlaybackService,
-    private routeControlService: RouteControlService
+    private routeControlService: RouteControlService,
+    private faultSimulationService: FaultSimulationService
   ) {}
 
   ngOnDestroy(): void {
@@ -96,6 +100,7 @@ export class SimulationService implements OnDestroy {
   private initializeLiveSimulation(): void {
     this.railwayDataService.resetAll();
     this.routeControlService.resetAll();
+    this.faultSimulationService.reset();
     this.eventsSubject.next([]);
     this.dispatcherActionsSubject.next([]);
     this.blockRequestsSubject.next([]);
@@ -222,9 +227,13 @@ export class SimulationService implements OnDestroy {
 
     this.routeControlService.tickUnlock(deltaSeconds * state.speedMultiplier);
 
+    this.faultSimulationService.tick(newTime);
+    this.faultSimulationService.applyFaultEffects();
+
     this.updateTrains(deltaSeconds * state.speedMultiplier);
     this.updateSignals();
     this.checkConflicts();
+    this.checkFaultViolations();
 
     if (state.mode === 'live') {
       this.playbackService.recordState({
@@ -235,6 +244,7 @@ export class SimulationService implements OnDestroy {
         switches: this.railwayDataService.getSwitches(),
         routes: this.routeControlService.getRoutes(),
         dispatcherActions: this.dispatcherActionsSubject.value,
+        faultState: this.faultSimulationService.getState(),
       });
     }
   }
@@ -429,6 +439,35 @@ export class SimulationService implements OnDestroy {
       return;
     }
 
+    const safetyCheck = this.faultSimulationService.checkOperationSafety('train_enter_block', {
+      blockSectionId: nextBlock.id,
+    });
+    if (!safetyCheck.safe) {
+      const conflict: ConflictAlert = {
+        message: `${safetyCheck.reason} - 列车「${train.name}」`,
+        type: 'invalid_route',
+        trainId: trainId,
+        blockSectionId: nextBlock.id,
+      };
+      this.triggerFaultViolation(conflict);
+      return;
+    }
+
+    const trainDepartCheck = this.faultSimulationService.checkOperationSafety('train_depart', {
+      trainId: trainId,
+      blockSectionId: nextBlock.id,
+    });
+    if (!trainDepartCheck.safe) {
+      const conflict: ConflictAlert = {
+        message: `${trainDepartCheck.reason}`,
+        type: 'invalid_route',
+        trainId: trainId,
+        blockSectionId: nextBlock.id,
+      };
+      this.triggerFaultViolation(conflict);
+      return;
+    }
+
     const entrySignal = nextBlock.entrySignalId
       ? this.railwayDataService.getSignalById(nextBlock.entrySignalId)
       : undefined;
@@ -452,6 +491,12 @@ export class SimulationService implements OnDestroy {
       return;
     }
 
+    const speedRestriction = this.faultSimulationService.getSpeedRestrictionForBlock(nextBlock.id);
+    let actualSpeed = train.speed;
+    if (speedRestriction && train.speed > speedRestriction.maxSpeed) {
+      actualSpeed = speedRestriction.maxSpeed;
+    }
+
     this.occupyBlock(nextBlock.id, trainId);
 
     this.railwayDataService.updateTrain({
@@ -460,6 +505,7 @@ export class SimulationService implements OnDestroy {
       currentStationId: undefined,
       progress: 0,
       state: 'running',
+      speed: actualSpeed,
     });
 
     const event: SimulationEvent = {
@@ -680,12 +726,76 @@ export class SimulationService implements OnDestroy {
     });
   }
 
+  private triggerFaultViolation(conflict: ConflictAlert): void {
+    const state = this.stateSubject.value;
+    this.stateSubject.next({
+      ...state,
+      isPaused: true,
+      conflictAlert: conflict,
+    });
+
+    const event: SimulationEvent = {
+      timestamp: state.currentTime,
+      type: 'conflict_detected',
+      data: conflict,
+    };
+    this.addEvent(event);
+
+    this.addDispatcherAction({
+      type: 'emergency_stop',
+      data: { reason: conflict.message, conflictType: conflict.type },
+      operator: 'system',
+    });
+  }
+
+  private checkFaultViolations(): void {
+    const trains = this.railwayDataService.getTrains();
+    const blockedSections = this.faultSimulationService.getBlockedSections();
+    const blockedIds = new Set(blockedSections.map(bs => bs.blockSectionId));
+
+    for (const train of trains) {
+      if (train.state !== 'running' || !train.currentBlockSectionId) continue;
+
+      if (blockedIds.has(train.currentBlockSectionId)) {
+        const block = this.railwayDataService.getBlockSectionById(train.currentBlockSectionId);
+        const conflict: ConflictAlert = {
+          message: `安全违规：列车「${train.name}」进入了被封锁的区间「${block?.name || train.currentBlockSectionId}」`,
+          type: 'invalid_route',
+          trainId: train.id,
+          blockSectionId: train.currentBlockSectionId,
+        };
+        this.triggerFaultViolation(conflict);
+        return;
+      }
+    }
+  }
+
   private addEvent(event: SimulationEvent): void {
     const events = [...this.eventsSubject.value, event];
     this.eventsSubject.next(events);
   }
 
   setRoute(routeId: string): { success: boolean; conflict?: ConflictAlert } {
+    const route = this.routeControlService.getRouteById(routeId);
+    if (!route) {
+      return { success: false, conflict: { message: '进路不存在', type: 'invalid_route' } };
+    }
+
+    const safetyCheck = this.faultSimulationService.checkOperationSafety('set_route', {
+      blockSectionIds: route.blockSectionIds,
+      switchIds: route.switchIds,
+    });
+    if (!safetyCheck.safe) {
+      return {
+        success: false,
+        conflict: {
+          message: safetyCheck.reason || '安全检查未通过',
+          type: 'invalid_route',
+          routeId,
+        },
+      };
+    }
+
     const result = this.routeControlService.setRoute(routeId);
 
     if (result.success) {
@@ -701,6 +811,15 @@ export class SimulationService implements OnDestroy {
         data: { routeId },
         operator: 'dispatcher',
       });
+
+      const activeFaults = this.faultSimulationService.getActiveFaults();
+      if (activeFaults.length > 0) {
+        this.faultSimulationService.recordManualRouteSetup(
+          activeFaults[0].id,
+          routeId,
+          route.name
+        );
+      }
 
       this.checkWaitingTrains();
     }
@@ -730,6 +849,20 @@ export class SimulationService implements OnDestroy {
   }
 
   setSignalManual(signalId: string, state: 'clear' | 'stop'): { success: boolean; message?: string } {
+    if (state === 'clear') {
+      const safetyCheck = this.faultSimulationService.checkOperationSafety('signal_clear', {
+        signalId,
+      });
+      if (!safetyCheck.safe) {
+        const conflict: ConflictAlert = {
+          message: safetyCheck.reason || '信号开放失败',
+          type: 'invalid_route',
+        };
+        this.triggerFaultViolation(conflict);
+        return { success: false, message: safetyCheck.reason };
+      }
+    }
+
     const result = this.routeControlService.setSignalManual(signalId, state);
 
     if (result.success) {
@@ -755,6 +888,18 @@ export class SimulationService implements OnDestroy {
   setSwitchPosition(switchId: string, position: 'normal' | 'reverse'): boolean {
     const sw = this.railwayDataService.getSwitchById(switchId);
     if (!sw || sw.isLocked) return false;
+
+    const safetyCheck = this.faultSimulationService.checkOperationSafety('switch_change', {
+      switchId,
+    });
+    if (!safetyCheck.safe) {
+      const conflict: ConflictAlert = {
+        message: safetyCheck.reason || '道岔操作失败',
+        type: 'invalid_route',
+      };
+      this.triggerFaultViolation(conflict);
+      return false;
+    }
 
     this.railwayDataService.updateSwitch({
       ...sw,
@@ -893,6 +1038,7 @@ export class SimulationService implements OnDestroy {
     this.stop();
     this.railwayDataService.resetAll();
     this.routeControlService.resetAll();
+    this.faultSimulationService.reset();
     this.eventsSubject.next([]);
     this.dispatcherActionsSubject.next([]);
     this.blockRequestsSubject.next([]);
@@ -931,6 +1077,7 @@ export class SimulationService implements OnDestroy {
     this.stop();
     this.railwayDataService.resetAll();
     this.routeControlService.resetAll();
+    this.faultSimulationService.reset();
 
     this.stateSubject.next({
       currentTime: 0,
@@ -951,6 +1098,8 @@ export class SimulationService implements OnDestroy {
       if (initialState.routes) this.routeControlService.setRoutes(initialState.routes);
       if (initialState.dispatcherActions)
         this.dispatcherActionsSubject.next(initialState.dispatcherActions);
+      if (initialState.faultState)
+        this.faultSimulationService.setState(initialState.faultState);
     }
 
     this.startSimulationLoop();
@@ -963,13 +1112,14 @@ export class SimulationService implements OnDestroy {
     const recording = this.playbackService.getStateAtTime(newTime);
 
     if (recording) {
-      const { trains, blocks, signals, switches, routes, dispatcherActions } = recording;
+      const { trains, blocks, signals, switches, routes, dispatcherActions, faultState } = recording;
       this.railwayDataService.setTrains(trains);
       this.railwayDataService.setBlockSections(blocks);
       this.railwayDataService.setSignals(signals);
       if (switches) this.railwayDataService.setSwitches(switches);
       if (routes) this.routeControlService.setRoutes(routes);
       if (dispatcherActions) this.dispatcherActionsSubject.next(dispatcherActions);
+      if (faultState) this.faultSimulationService.setState(faultState);
     }
 
     this.stateSubject.next({
@@ -1001,6 +1151,8 @@ export class SimulationService implements OnDestroy {
         if (recording.routes) this.routeControlService.setRoutes(recording.routes);
         if (recording.dispatcherActions)
           this.dispatcherActionsSubject.next(recording.dispatcherActions);
+        if (recording.faultState)
+          this.faultSimulationService.setState(recording.faultState);
       }
     } else if (state.mode === 'live' && this.playbackService.hasRecording()) {
       const recording = this.playbackService.getStateAtTime(clampedTime);
@@ -1012,6 +1164,8 @@ export class SimulationService implements OnDestroy {
         if (recording.routes) this.routeControlService.setRoutes(recording.routes);
         if (recording.dispatcherActions)
           this.dispatcherActionsSubject.next(recording.dispatcherActions);
+        if (recording.faultState)
+          this.faultSimulationService.setState(recording.faultState);
       }
       this.stateSubject.next({
         ...state,
@@ -1032,6 +1186,7 @@ export class SimulationService implements OnDestroy {
     this.stop();
     this.railwayDataService.resetAll();
     this.routeControlService.resetAll();
+    this.faultSimulationService.reset();
 
     this.stateSubject.next({
       currentTime: 0,

@@ -1,0 +1,376 @@
+<div class="fault-panel">
+  <div class="violation-alert" *ngIf="currentViolation">
+    <div class="violation-header">
+      <mat-icon class="violation-icon">report_problem</mat-icon>
+      <span class="violation-title">处置顺序违规</span>
+      <button mat-icon-button (click)="onDismissViolation()">
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+    <div class="violation-body">
+      <p>{{ currentViolation.reason }}</p>
+      <div class="violation-detail">
+        <span>当前状态：<strong>{{ getFaultStatusLabel(currentViolation.currentStatus) }}</strong></span>
+        <span>需要状态：<strong>{{ getFaultStatusLabel(currentViolation.requiredStatus) }}</strong></span>
+      </div>
+    </div>
+  </div>
+
+  <mat-tab-group>
+    <mat-tab label="故障处置">
+      <div class="tab-content">
+        <div class="section-title">
+          <mat-icon color="warn">warning</mat-icon>
+          <span>活动故障 ({{ getActiveFaults().length }})</span>
+        </div>
+
+        <div class="fault-list" *ngIf="getActiveFaults().length > 0">
+          <mat-card
+            class="fault-card"
+            *ngFor="let fault of getActiveFaults()"
+            [ngClass]="getSeverityClass(fault.severity)"
+          >
+            <mat-card-header>
+              <mat-icon mat-card-avatar>{{ getFaultTypeIcon(fault.type) }}</mat-icon>
+              <mat-card-title>
+                {{ getFaultTypeLabel(fault.type) }}
+                <span class="severity-badge" [ngClass]="getSeverityClass(fault.severity)">
+                  {{ getSeverityLabel(fault.severity) }}
+                </span>
+              </mat-card-title>
+              <mat-card-subtitle>
+                {{ fault.targetName }}
+              </mat-card-subtitle>
+            </mat-card-header>
+
+            <mat-card-content>
+              <p class="description">{{ fault.description }}</p>
+
+              <div class="fault-status-row">
+                <div class="fault-status">
+                  <span class="status-label">状态：</span>
+                  <span class="status-badge" [ngClass]="getFaultStatusClass(fault.status)">
+                    {{ getFaultStatusLabel(fault.status) }}
+                  </span>
+                </div>
+                <div class="fault-progress">
+                  <span class="progress-label">处置进度：</span>
+                  <div class="progress-bar-container">
+                    <div class="progress-bar" [style.width.%]="getProgressPercentage(fault)"></div>
+                  </div>
+                  <span class="progress-text">{{ getProgressPercentage(fault) }}%</span>
+                </div>
+              </div>
+
+              <div class="fault-info">
+                <div *ngIf="fault.affectedBlockIds.length > 0" class="info-item">
+                  <span class="info-label">影响区间：</span>
+                  <span class="info-value">
+                    {{ getImpactDescription(fault) }}
+                  </span>
+                </div>
+                <div *ngIf="fault.affectedTrainIds.length > 0" class="info-item">
+                  <span class="info-label">影响列车：</span>
+                  <span class="info-value">{{ fault.affectedTrainIds.join('、') }}</span>
+                </div>
+              </div>
+
+              <div class="handling-steps">
+                <div class="steps-title">处置步骤</div>
+                <div class="steps-container">
+                  <div
+                    class="step-item"
+                    *ngFor="let step of getHandlingSteps(fault); let last = last"
+                    [ngClass]="getStepStatus(step, fault)"
+                  >
+                    <div class="step-indicator">
+                      <div class="step-icon-wrapper">
+                        <mat-icon *ngIf="step.completed" class="step-done">check_circle</mat-icon>
+                        <mat-icon *ngIf="!step.completed && getStepStatus(step, fault) === 'active'" class="step-active-icon">{{ step.icon }}</mat-icon>
+                        <mat-icon *ngIf="!step.completed && getStepStatus(step, fault) !== 'active'" class="step-pending-icon">{{ step.icon }}</mat-icon>
+                      </div>
+                      <div class="step-connector" *ngIf="!last"></div>
+                    </div>
+                    <div class="step-content">
+                      <div class="step-label">
+                        {{ step.label }}
+                        <span class="step-required" *ngIf="step.required">*必选</span>
+                        <span class="step-optional" *ngIf="!step.required">可选</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="blocked-sections" *ngIf="getBlockedSectionsForFault(fault.id).length > 0">
+                <div class="info-label">已封锁区间：</div>
+                <div class="blocked-list">
+                  <mat-chip
+                    *ngFor="let bs of getBlockedSectionsForFault(fault.id)"
+                    color="warn"
+                    selected
+                  >
+                    {{ getBlockName(bs.blockSectionId) }}
+                    <button matChipRemove (click)="onUnblockSection(fault.id, bs.blockSectionId)">
+                      <mat-icon>cancel</mat-icon>
+                    </button>
+                  </mat-chip>
+                </div>
+              </div>
+
+              <div class="speed-restrictions" *ngIf="getSpeedRestrictionsForFault(fault.id).length > 0">
+                <div class="info-label">当前限速：</div>
+                <div class="speed-list">
+                  <mat-chip
+                    *ngFor="let sr of getSpeedRestrictionsForFault(fault.id)"
+                    color="accent"
+                    selected
+                  >
+                    {{ getBlockName(sr.blockSectionId) }}: {{ sr.maxSpeed }}km/h
+                    <button matChipRemove (click)="onLiftSpeedRestriction(fault.id, sr.blockSectionId)">
+                      <mat-icon>cancel</mat-icon>
+                    </button>
+                  </mat-chip>
+                </div>
+              </div>
+
+              <mat-divider></mat-divider>
+
+              <div class="action-section">
+                <div class="action-row" *ngIf="canAcknowledge(fault)">
+                  <button
+                    mat-raised-button
+                    color="primary"
+                    (click)="onAcknowledgeFault(fault.id)"
+                  >
+                    <mat-icon>check_circle</mat-icon>
+                    确认故障
+                  </button>
+                </div>
+
+                <div class="action-row" *ngIf="canBlock(fault)">
+                  <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>选择要封锁的区间</mat-label>
+                    <mat-select [(ngModel)]="selectedBlockToBlock">
+                      <mat-option
+                        *ngFor="let block of blocks"
+                        [value]="block.id"
+                      >
+                        {{ block.name }}
+                      </mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                  <button
+                    mat-raised-button
+                    color="warn"
+                    [disabled]="!selectedBlockToBlock"
+                    (click)="onBlockSection(fault.id)"
+                  >
+                    <mat-icon>block</mat-icon>
+                    封锁区间
+                  </button>
+                </div>
+
+                <div class="action-row" *ngIf="fault.status !== 'active' && fault.status !== 'resolved'">
+                  <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>选择进路（人工办理）</mat-label>
+                    <mat-select [(ngModel)]="selectedRouteId">
+                      <mat-option
+                        *ngFor="let route of getAvailableRoutes()"
+                        [value]="route.id"
+                      >
+                        {{ route.name }}
+                      </mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                  <button
+                    mat-raised-button
+                    color="accent"
+                    [disabled]="!selectedRouteId"
+                    (click)="onManualRouteSetup(fault.id)"
+                  >
+                    <mat-icon>route</mat-icon>
+                    人工办理进路
+                  </button>
+                </div>
+
+                <div class="action-row" *ngIf="fault.status !== 'active' && fault.status !== 'resolved'">
+                  <mat-form-field appearance="outline" class="speed-input">
+                    <mat-label>限速 (km/h)</mat-label>
+                    <input matInput type="number" [(ngModel)]="speedLimit" min="5" max="100" />
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" class="block-select">
+                    <mat-label>限速区间</mat-label>
+                    <mat-select [(ngModel)]="selectedBlockForSpeed">
+                      <mat-option
+                        *ngFor="let block of blocks"
+                        [value]="block.id"
+                      >
+                        {{ block.name }}
+                      </mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                  <button
+                    mat-raised-button
+                    color="primary"
+                    [disabled]="!selectedBlockForSpeed"
+                    (click)="onSetSpeedRestriction(fault.id)"
+                  >
+                    <mat-icon>speed</mat-icon>
+                    设置限速
+                  </button>
+                </div>
+
+                <div class="action-row" *ngIf="canResolve(fault)">
+                  <button
+                    mat-raised-button
+                    color="primary"
+                    (click)="onResolveFault(fault.id)"
+                  >
+                    <mat-icon>check</mat-icon>
+                    故障解除
+                  </button>
+                </div>
+              </div>
+            </mat-card-content>
+          </mat-card>
+        </div>
+
+        <div class="no-faults" *ngIf="getActiveFaults().length === 0">
+          <mat-icon>check_circle_outline</mat-icon>
+          <p>暂无活动故障</p>
+        </div>
+
+        <mat-divider></mat-divider>
+
+        <div class="section-title">
+          <mat-icon>history</mat-icon>
+          <span>已解除故障 ({{ getResolvedFaults().length }})</span>
+        </div>
+
+        <div class="resolved-list" *ngIf="getResolvedFaults().length > 0">
+          <div
+            class="resolved-item"
+            *ngFor="let fault of getResolvedFaults()"
+          >
+            <mat-icon>check_circle</mat-icon>
+            <span class="resolved-text">
+              {{ getFaultTypeLabel(fault.type) }} - {{ fault.targetName }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="手动触发">
+      <div class="tab-content">
+        <div class="section-title">
+          <mat-icon>play_circle</mat-icon>
+          <span>手动触发故障</span>
+        </div>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>故障类型</mat-label>
+          <mat-select [(ngModel)]="selectedFaultType">
+            <mat-option
+              *ngFor="let ft of faultTypes"
+              [value]="ft.type"
+            >
+              <mat-icon>{{ ft.icon }}</mat-icon>
+              {{ ft.label }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>选择目标</mat-label>
+          <mat-select [(ngModel)]="selectedTargetId">
+            <mat-option
+              *ngFor="let target of getAvailableTargets()"
+              [value]="target.id"
+            >
+              {{ target.name }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <button
+          mat-raised-button
+          color="warn"
+          class="full-width"
+          [disabled]="!selectedTargetId"
+          (click)="onTriggerFault()"
+        >
+          <mat-icon>warning</mat-icon>
+          触发故障
+        </button>
+
+        <mat-divider></mat-divider>
+
+        <div class="section-title">
+          <mat-icon>shuffle</mat-icon>
+          <span>随机故障模式</span>
+        </div>
+
+        <div class="random-toggle">
+          <span>启用随机故障</span>
+          <mat-slide-toggle
+            [checked]="isRandomFaultsEnabled"
+            (change)="onToggleRandomFaults()"
+          ></mat-slide-toggle>
+        </div>
+
+        <mat-form-field appearance="outline" class="full-width" *ngIf="isRandomFaultsEnabled">
+          <mat-label>随机故障间隔 (秒)</mat-label>
+          <input
+            matInput
+            type="number"
+            [(ngModel)]="randomFaultInterval"
+            (change)="onRandomFaultIntervalChange()"
+            min="10"
+            max="300"
+          />
+        </mat-form-field>
+
+        <p class="hint" *ngIf="isRandomFaultsEnabled">
+          系统将每隔 {{ randomFaultInterval }} 秒随机触发一种故障
+        </p>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="应急日志">
+      <div class="tab-content">
+        <div class="section-title">
+          <mat-icon>description</mat-icon>
+          <span>应急处置日志</span>
+        </div>
+
+        <div class="log-list">
+          <div
+            class="log-item"
+            *ngFor="let entry of getReversedLog()"
+            [ngClass]="getLogCategoryClass(entry.category)"
+          >
+            <div class="log-icon">
+              <mat-icon>{{ getLogCategoryIcon(entry.category) }}</mat-icon>
+            </div>
+            <div class="log-content">
+              <div class="log-message">{{ entry.message }}</div>
+              <div class="log-meta">
+                <span class="log-time">{{ formatTime(entry.timestamp) }}</span>
+                <span class="log-operator" *ngIf="entry.operator">
+                  操作人：{{ entry.operator }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="no-logs" *ngIf="emergencyLog.length === 0">
+          <mat-icon>description</mat-icon>
+          <p>暂无应急日志</p>
+        </div>
+      </div>
+    </mat-tab>
+  </mat-tab-group>
+</div>

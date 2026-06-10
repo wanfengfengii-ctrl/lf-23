@@ -1,6 +1,14 @@
 <mat-toolbar color="primary" class="app-toolbar">
   <span class="title">{{ title }}</span>
   <span class="spacer"></span>
+  <button mat-button (click)="showFaultPanel = !showFaultPanel">
+    <mat-icon
+      matBadge="{{ activeFaultCount }}"
+      matBadgeColor="warn"
+      [matBadgeHidden]="activeFaultCount === 0"
+    >warning</mat-icon>
+    {{ showFaultPanel ? '隐藏故障' : '故障处置' }}
+  </button>
   <button mat-button (click)="showDispatcherPanel = !showDispatcherPanel">
     <mat-icon>{{ showDispatcherPanel ? 'chevron_right' : 'chevron_left' }}</mat-icon>
     {{ showDispatcherPanel ? '隐藏调度台' : '显示调度台' }}
@@ -25,6 +33,9 @@
   </div>
 
   <div class="side-panels">
+    <div class="fault-panel-container" *ngIf="showFaultPanel">
+      <app-fault-panel></app-fault-panel>
+    </div>
     <div class="dispatcher-panel" *ngIf="showDispatcherPanel">
       <app-dispatcher-panel></app-dispatcher-panel>
     </div>

@@ -6,6 +6,7 @@ import { SimulationState, TrainSchedule, SimulationEvent } from '../../models/ra
 import { SimulationService } from '../../services/simulation.service';
 import { RailwayDataService } from '../../services/railway-data.service';
 import { PlaybackService } from '../../services/playback.service';
+import { FaultSimulationService } from '../../services/fault-simulation.service';
 
 @Component({
   selector: 'app-timeline',
@@ -30,7 +31,8 @@ export class TimelineComponent implements OnInit, OnDestroy {
   constructor(
     private simulationService: SimulationService,
     private railwayDataService: RailwayDataService,
-    private playbackService: PlaybackService
+    private playbackService: PlaybackService,
+    private faultSimulationService: FaultSimulationService
   ) {}
 
   ngOnInit(): void {
@@ -52,6 +54,12 @@ export class TimelineComponent implements OnInit, OnDestroy {
     this.subscriptions.push(
       this.railwayDataService.schedules$.subscribe(() => {
         this.updateTimeline();
+      })
+    );
+
+    this.subscriptions.push(
+      this.faultSimulationService.state$.subscribe(() => {
+        this.updateFaultMarkers();
       })
     );
 
@@ -83,6 +91,9 @@ export class TimelineComponent implements OnInit, OnDestroy {
 
     this.svg.append('g')
       .attr('class', 'train-tracks');
+
+    this.svg.append('g')
+      .attr('class', 'fault-markers');
 
     this.svg.append('g')
       .attr('class', 'playhead')
@@ -243,6 +254,94 @@ export class TimelineComponent implements OnInit, OnDestroy {
     const time = this.xScale.invert(clampedX);
 
     this.simulationService.seekTo(Math.max(0, time));
+  }
+
+  private updateFaultMarkers(): void {
+    if (!this.svg) return;
+
+    const g = this.svg.select('.fault-markers');
+    const faultState = this.faultSimulationService.getState();
+    const faults = faultState.faults;
+
+    const faultMarkerData = faults.map(fault => ({
+      id: fault.id,
+      type: fault.type,
+      status: fault.status,
+      startTime: fault.startTime,
+      targetName: fault.targetName,
+      severity: fault.severity,
+    }));
+
+    const markers = g.selectAll<SVGGElement, typeof faultMarkerData[0]>('.fault-marker')
+      .data(faultMarkerData, d => d.id);
+
+    markers.exit().remove();
+
+    const markersEnter = markers.enter()
+      .append('g')
+      .attr('class', 'fault-marker');
+
+    markersEnter.append('polygon');
+    markersEnter.append('text');
+
+    const allMarkers = markersEnter.merge(markers as any);
+
+    const markerY = this.height - 42;
+    const self = this;
+
+    allMarkers.each(function(d: any) {
+      const marker = d3.select(this);
+      const x = self.xScale(d.startTime);
+
+      const color = self.getFaultMarkerColor(d.type, d.status);
+      const opacity = d.status === 'resolved' ? 0.4 : 1.0;
+      const symbol = self.getFaultMarkerSymbol(d.type);
+
+      marker.select('polygon')
+        .attr('points', `${x},${markerY - 10} ${x - 6},${markerY} ${x + 6},${markerY}`)
+        .attr('fill', color)
+        .attr('opacity', opacity);
+
+      marker.select('text')
+        .attr('x', x)
+        .attr('y', markerY - 13)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '8px')
+        .attr('fill', color)
+        .attr('opacity', opacity)
+        .text(symbol);
+    });
+  }
+
+  private getFaultMarkerColor(type: string, status: string): string {
+    if (status === 'resolved') return '#9e9e9e';
+    switch (type) {
+      case 'signal_fault':
+        return '#ff6f00';
+      case 'switch_jammed':
+        return '#d32f2f';
+      case 'block_occupancy_anomaly':
+        return '#e65100';
+      case 'train_emergency_stop':
+        return '#c62828';
+      default:
+        return '#f44336';
+    }
+  }
+
+  private getFaultMarkerSymbol(type: string): string {
+    switch (type) {
+      case 'signal_fault':
+        return '⚠信';
+      case 'switch_jammed':
+        return '⚠岔';
+      case 'block_occupancy_anomaly':
+        return '⚠区';
+      case 'train_emergency_stop':
+        return '⚠车';
+      default:
+        return '⚠';
+    }
   }
 
   private formatTime(seconds: number): string {
