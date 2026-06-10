@@ -1,0 +1,136 @@
+<mat-card class="audit-panel">
+  <mat-card-header>
+    <mat-card-title>
+      <mat-icon>description</mat-icon>
+      操作审计日志
+    </mat-card-title>
+    <mat-card-subtitle>
+      <span *ngIf="canViewAudit" class="has-perm">
+        <mat-icon style="vertical-align: middle;">verified</mat-icon>
+        完整审计权限
+      </span>
+      <span *ngIf="!canViewAudit && currentDispatcher" class="no-perm">
+        仅总调度员可查看完整审计
+      </span>
+    </mat-card-subtitle>
+  </mat-card-header>
+  <mat-divider></mat-divider>
+
+  <div class="stats-bar">
+    <div class="stat-item">
+      <div class="stat-value total">{{ stats.totalOperations }}</div>
+      <div class="stat-label">总操作</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value success">{{ stats.successCount }}</div>
+      <div class="stat-label">成功</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value failed">{{ stats.failedCount }}</div>
+      <div class="stat-label">失败</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value blocked">{{ stats.blockedCount }}</div>
+      <div class="stat-label">阻止</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value rate">{{ getSuccessRate() }}</div>
+      <div class="stat-label">成功率</div>
+    </div>
+    <div style="flex: 1;"></div>
+    <button
+      mat-stroked-button
+      class="export-btn"
+      (click)="onExport('json')"
+      matTooltip="导出为 JSON"
+    >
+      <mat-icon>code</mat-icon>
+      JSON
+    </button>
+    <button
+      mat-stroked-button
+      class="export-btn"
+      (click)="onExport('csv')"
+      matTooltip="导出为 CSV (Excel)"
+    >
+      <mat-icon>table_chart</mat-icon>
+      CSV
+    </button>
+  </div>
+
+  <div class="filter-bar">
+    <mat-form-field appearance="outline" class="filter-field">
+      <mat-label>操作人</mat-label>
+      <mat-select [(ngModel)]="filterOperator" (selectionChange)="applyFilters()">
+        <mat-option value="all">全部</mat-option>
+        <mat-option *ngFor="let d of allDispatchers" [value]="d.id">
+          {{ d.realName }} - {{ getRoleLabel(d.role) }}
+        </mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="filter-field">
+      <mat-label>操作结果</mat-label>
+      <mat-select [(ngModel)]="filterResult" (selectionChange)="applyFilters()">
+        <mat-option value="all">全部</mat-option>
+        <mat-option value="success">成功</mat-option>
+        <mat-option value="failed">失败</mat-option>
+        <mat-option value="blocked">阻止</mat-option>
+        <mat-option value="pending_approval">待审批</mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="filter-field">
+      <mat-label>操作类型</mat-label>
+      <mat-select [(ngModel)]="filterActionType" (selectionChange)="applyFilters()">
+        <mat-option value="all">全部</mat-option>
+        <mat-option *ngFor="let t of getUniqueActionTypes()" [value]="t">
+          {{ getActionTypeLabel(t) }}
+        </mat-option>
+      </mat-select>
+    </mat-form-field>
+  </div>
+
+  <mat-divider></mat-divider>
+
+  <div class="logs-container">
+    <div *ngIf="filteredLogs.length === 0" class="empty-state">
+      <mat-icon style="font-size: 48px; opacity: 0.3;">description</mat-icon>
+      <p>暂无审计记录</p>
+    </div>
+
+    <mat-list dense class="logs-list">
+      <mat-list-item *ngFor="let log of filteredLogs; let i = index" class="log-item">
+        <span matListItemMeta class="log-meta">
+          <span class="log-time">{{ formatTime(log.simTime) }}</span>
+          <mat-chip highlighted [ngClass]="getResultClass(log.result)">
+            {{ getResultLabel(log.result) }}
+          </mat-chip>
+        </span>
+        <div matListItemAvatar class="log-avatar" [style.background]="getRoleColor(log.operatorRole)">
+          <mat-icon style="font-size: 18px;">{{ getActionTypeIcon(log.actionType) }}</mat-icon>
+        </div>
+        <div matListItemTitle class="log-title">
+          <span class="log-operator" [style.color]="getRoleColor(log.operatorRole)">
+            {{ log.operatorName }}
+          </span>
+          <span class="log-action">{{ getActionTypeLabel(log.actionType) }}</span>
+          <span class="log-target">{{ log.targetName }}</span>
+          <span *ngIf="log.approverName" class="log-approver">
+            (审批人: {{ log.approverName }})
+          </span>
+        </div>
+        <div matListItemLine class="log-details">
+          <span *ngIf="log.rejectionReason" class="log-reject">
+            <mat-icon style="font-size: 14px; vertical-align: middle;">report</mat-icon>
+            {{ log.rejectionReason }}
+          </span>
+          <span *ngIf="log.details && !log.rejectionReason" class="log-detail-text">
+            {{ log.details | json }}
+          </span>
+        </div>
+        <mat-divider *ngIf="i < filteredLogs.length - 1"></mat-divider>
+      </mat-list-item>
+    </mat-list>
+  </div>
+</mat-card>

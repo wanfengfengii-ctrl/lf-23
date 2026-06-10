@@ -1,6 +1,21 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { Train, BlockSection, Signal, Switch, Route, DispatcherAction, FaultSimulationState } from '../models/railway.model';
+import {
+  Train,
+  BlockSection,
+  Signal,
+  Switch,
+  Route,
+  DispatcherAction,
+  FaultSimulationState,
+  AuditLogEntry,
+  OperationApproval,
+  ShiftHandover,
+  DispatcherSession,
+  PermissionViolation,
+  ConcurrentConflict,
+  MultiDispatcherState,
+} from '../models/railway.model';
 
 export interface SimulationSnapshot {
   time: number;
@@ -11,6 +26,14 @@ export interface SimulationSnapshot {
   routes?: Route[];
   dispatcherActions?: DispatcherAction[];
   faultState?: FaultSimulationState;
+  multiDispatcherState?: MultiDispatcherState;
+  auditLogs?: AuditLogEntry[];
+  activeSessions?: DispatcherSession[];
+  currentDispatcherId?: string | null;
+  pendingApprovals?: OperationApproval[];
+  shiftHandovers?: ShiftHandover[];
+  permissionViolations?: PermissionViolation[];
+  concurrentConflicts?: ConcurrentConflict[];
 }
 
 @Injectable({
@@ -44,6 +67,26 @@ export class PlaybackService {
         : undefined,
       faultState: snapshot.faultState
         ? JSON.parse(JSON.stringify(snapshot.faultState))
+        : undefined,
+      multiDispatcherState: snapshot.multiDispatcherState
+        ? JSON.parse(JSON.stringify(snapshot.multiDispatcherState))
+        : undefined,
+      auditLogs: snapshot.auditLogs ? JSON.parse(JSON.stringify(snapshot.auditLogs)) : undefined,
+      activeSessions: snapshot.activeSessions
+        ? JSON.parse(JSON.stringify(snapshot.activeSessions))
+        : undefined,
+      currentDispatcherId: snapshot.currentDispatcherId,
+      pendingApprovals: snapshot.pendingApprovals
+        ? JSON.parse(JSON.stringify(snapshot.pendingApprovals))
+        : undefined,
+      shiftHandovers: snapshot.shiftHandovers
+        ? JSON.parse(JSON.stringify(snapshot.shiftHandovers))
+        : undefined,
+      permissionViolations: snapshot.permissionViolations
+        ? JSON.parse(JSON.stringify(snapshot.permissionViolations))
+        : undefined,
+      concurrentConflicts: snapshot.concurrentConflicts
+        ? JSON.parse(JSON.stringify(snapshot.concurrentConflicts))
         : undefined,
     });
     this.recordingSubject.next(recording);
@@ -136,6 +179,14 @@ export class PlaybackService {
       routes: upper.routes,
       dispatcherActions: upper.dispatcherActions,
       faultState: upper.faultState,
+      multiDispatcherState: upper.multiDispatcherState,
+      auditLogs: upper.auditLogs,
+      activeSessions: upper.activeSessions,
+      currentDispatcherId: upper.currentDispatcherId,
+      pendingApprovals: upper.pendingApprovals,
+      shiftHandovers: upper.shiftHandovers,
+      permissionViolations: upper.permissionViolations,
+      concurrentConflicts: upper.concurrentConflicts,
     };
   }
 
@@ -335,22 +386,226 @@ export class PlaybackService {
             });
           }
         });
+      }
 
-        const prevLogCount = (prev.faultState.emergencyLog || []).length;
-        const currLogCount = (curr.faultState.emergencyLog || []).length;
-        if (currLogCount > prevLogCount) {
-          const newLogs = (curr.faultState.emergencyLog || []).slice(prevLogCount);
-          newLogs.forEach(log => {
+      if (prev.dispatcherActions && curr.dispatcherActions) {
+        const prevActionIds = prev.dispatcherActions.map(a => a.id);
+        const currActionIds = curr.dispatcherActions.map(a => a.id);
+        const prevActionSet = new Set(prevActionIds);
+        (curr.dispatcherActions || []).forEach(action => {
+          if (!prevActionSet.has(action.id)) {
             events.push({
               time: curr.time,
-              type: 'emergency_log',
+              type: 'dispatcher_action',
               data: {
-                logId: log.id,
-                category: log.category,
-                message: log.message,
-                operator: log.operator,
+                actionId: action.id,
+                actionType: action.type,
+                operator: action.operator,
+                details: action.data,
               },
             });
+          }
+        });
+      }
+
+      if (prev.auditLogs && curr.auditLogs) {
+        const prevAuditIds = (prev.auditLogs || []).map(a => a.id);
+        const prevAuditSet = new Set(prevAuditIds);
+        (curr.auditLogs || []).forEach(log => {
+          if (!prevAuditSet.has(log.id)) {
+            events.push({
+              time: curr.time,
+              type: 'audit_log',
+              data: {
+                auditId: log.id,
+                operator: log.operatorName,
+                operatorRole: log.operatorRole,
+                actionType: log.actionType,
+                targetName: log.targetName,
+                result: log.result,
+                details: log.details,
+                approver: log.approverName,
+              },
+            });
+          }
+        });
+      }
+
+      if (prev.pendingApprovals && curr.pendingApprovals) {
+        const prevApprovalIds = (prev.pendingApprovals || []).map(a => a.id);
+        const prevApprovalSet = new Set(prevApprovalIds);
+        const currApprovalMap = new Map((curr.pendingApprovals || []).map(a => [a.id, a]));
+        const allApprovalIds = new Set([...prevApprovalIds, ...(curr.pendingApprovals || []).map(a => a.id)]);
+
+        allApprovalIds.forEach(id => {
+          const prevApproval = (prev.pendingApprovals || []).find(a => a.id === id);
+          const currApproval = currApprovalMap.get(id);
+
+          if (prevApproval && currApproval && prevApproval.status !== currApproval.status) {
+            events.push({
+              time: curr.time,
+              type: 'approval_decision',
+              data: {
+                approvalId: id,
+                actionType: currApproval.actionType,
+                requestor: currApproval.requestorName,
+                approver: currApproval.approverName,
+                status: currApproval.status,
+                rejectReason: currApproval.rejectReason,
+                targetName: currApproval.targetName,
+              },
+            });
+          }
+
+          if (!prevApprovalSet.has(id) && currApproval) {
+            events.push({
+              time: curr.time,
+              type: 'approval_submit',
+              data: {
+                approvalId: id,
+                actionType: currApproval.actionType,
+                requestor: currApproval.requestorName,
+                requestorRole: currApproval.requestorRole,
+                targetName: currApproval.targetName,
+                targetType: currApproval.targetType,
+              },
+            });
+          }
+        });
+      }
+
+      if (prev.shiftHandovers && curr.shiftHandovers) {
+        const prevHandoverIds = (prev.shiftHandovers || []).map(h => h.id);
+        const prevHandoverSet = new Set(prevHandoverIds);
+        const currHandoverMap = new Map((curr.shiftHandovers || []).map(h => [h.id, h]));
+        const allHandoverIds = new Set([...prevHandoverIds, ...(curr.shiftHandovers || []).map(h => h.id)]);
+
+        allHandoverIds.forEach(id => {
+          const prevHandover = (prev.shiftHandovers || []).find(h => h.id === id);
+          const currHandover = currHandoverMap.get(id);
+
+          if (!prevHandoverSet.has(id) && currHandover) {
+            events.push({
+              time: curr.time,
+              type: 'shift_handover_start',
+              data: {
+                handoverId: id,
+                fromName: currHandover.fromDispatcherName,
+                toName: currHandover.toDispatcherName,
+                fromRole: currHandover.fromRole,
+                toRole: currHandover.toRole,
+                notes: currHandover.notes,
+                itemCount: currHandover.pendingItems.length,
+              },
+            });
+          }
+
+          if (prevHandover && currHandover && prevHandover.status !== currHandover.status) {
+            events.push({
+              time: curr.time,
+              type: `shift_handover_${currHandover.status}`,
+              data: {
+                handoverId: id,
+                fromName: currHandover.fromDispatcherName,
+                toName: currHandover.toDispatcherName,
+                status: currHandover.status,
+              },
+            });
+          }
+        });
+      }
+
+      if (prev.permissionViolations && curr.permissionViolations) {
+        const prevViolationCount = (prev.permissionViolations || []).length;
+        const currViolationCount = (curr.permissionViolations || []).length;
+        if (currViolationCount > prevViolationCount) {
+          const newViolations = (curr.permissionViolations || []).slice(prevViolationCount);
+          newViolations.forEach(violation => {
+            events.push({
+              time: curr.time,
+              type: 'permission_violation',
+              data: {
+                operator: violation.operatorName,
+                operatorRole: violation.operatorRole,
+                actionType: violation.actionType,
+                targetName: violation.targetName,
+                reason: violation.reason,
+                requiredPermission: violation.requiredPermission,
+              },
+            });
+          });
+        }
+      }
+
+      if (prev.concurrentConflicts && curr.concurrentConflicts) {
+        const prevConflictCount = (prev.concurrentConflicts || []).length;
+        const currConflictCount = (curr.concurrentConflicts || []).length;
+        if (currConflictCount > prevConflictCount) {
+          const newConflicts = (curr.concurrentConflicts || []).slice(prevConflictCount);
+          newConflicts.forEach(conflict => {
+            events.push({
+              time: curr.time,
+              type: 'concurrent_conflict',
+              data: {
+                targetName: conflict.targetName,
+                targetType: conflict.targetType,
+                firstOperator: conflict.firstOperatorName,
+                secondOperator: conflict.secondOperatorName,
+                blockedOperator: conflict.blockedOperatorId === conflict.secondOperatorId ? conflict.secondOperatorName : conflict.firstOperatorName,
+                reason: conflict.reason,
+              },
+            });
+          });
+        }
+      }
+
+      if (prev.activeSessions && curr.activeSessions) {
+        const prevSessionUserIds = new Set((prev.activeSessions || []).map(s => s.dispatcher.id));
+        const currSessionUserIds = new Set((curr.activeSessions || []).map(s => s.dispatcher.id));
+
+        (curr.activeSessions || []).forEach(session => {
+          if (!prevSessionUserIds.has(session.dispatcher.id)) {
+            events.push({
+              time: curr.time,
+              type: 'dispatcher_login',
+              data: {
+                userId: session.dispatcher.id,
+                userName: session.dispatcher.realName,
+                userRole: session.dispatcher.role,
+                sessionId: session.sessionId,
+              },
+            });
+          }
+        });
+
+        (prev.activeSessions || []).forEach(session => {
+          if (!currSessionUserIds.has(session.dispatcher.id)) {
+            events.push({
+              time: curr.time,
+              type: 'dispatcher_logout',
+              data: {
+                userId: session.dispatcher.id,
+                userName: session.dispatcher.realName,
+                userRole: session.dispatcher.role,
+              },
+            });
+          }
+        });
+      }
+
+      const prevCurrentId = prev.currentDispatcherId;
+      const currCurrentId = curr.currentDispatcherId;
+      if (prevCurrentId !== currCurrentId && currCurrentId) {
+        const currSession = (curr.activeSessions || []).find(s => s.dispatcher.id === currCurrentId);
+        if (currSession) {
+          events.push({
+            time: curr.time,
+            type: 'dispatcher_switch',
+            data: {
+              userId: currSession.dispatcher.id,
+              userName: currSession.dispatcher.realName,
+              userRole: currSession.dispatcher.role,
+            },
           });
         }
       }

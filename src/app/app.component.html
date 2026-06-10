@@ -1,21 +1,60 @@
 <mat-toolbar color="primary" class="app-toolbar">
   <span class="title">{{ title }}</span>
+  <div *ngIf="currentDispatcher" class="current-user" [style.border-color]="getRoleColor()">
+    <div
+      class="user-avatar"
+      [style.background]="getRoleColor()"
+    >{{ currentDispatcher.realName.charAt(0) }}</div>
+    <div class="user-info">
+      <div class="user-name">{{ currentDispatcher.realName }}</div>
+      <div class="user-role" [style.color]="getRoleColor()">{{ getRoleLabel() }}</div>
+    </div>
+  </div>
   <span class="spacer"></span>
-  <button mat-button (click)="showFaultPanel = !showFaultPanel">
+  <button mat-button (click)="togglePanel('fault')"
+    [class.active-btn]="showFaultPanel">
     <mat-icon
       matBadge="{{ activeFaultCount }}"
       matBadgeColor="warn"
       [matBadgeHidden]="activeFaultCount === 0"
     >warning</mat-icon>
-    {{ showFaultPanel ? '隐藏故障' : '故障处置' }}
+    故障处置
   </button>
-  <button mat-button (click)="showDispatcherPanel = !showDispatcherPanel">
+  <button mat-button (click)="togglePanel('user')"
+    [class.active-btn]="showUserPanel">
+    <mat-icon>people</mat-icon>
+    用户
+  </button>
+  <button mat-button (click)="togglePanel('approval')"
+    [class.active-btn]="showApprovalPanel">
+    <mat-icon
+      matBadge="{{ pendingApprovalCount }}"
+      matBadgeColor="accent"
+      [matBadgeHidden]="pendingApprovalCount === 0"
+    >how_to_reg</mat-icon>
+    审批中心
+  </button>
+  <button mat-button (click)="togglePanel('handover')"
+    [class.active-btn]="showHandoverPanel">
+    <mat-icon>swap_horiz</mat-icon>
+    交接班
+  </button>
+  <button mat-button (click)="togglePanel('audit')"
+    [class.active-btn]="showAuditPanel"
+    *ngIf="canViewAudit"
+    matTooltip="仅总调度员可查看">
+    <mat-icon>description</mat-icon>
+    审计日志
+  </button>
+  <button mat-button (click)="togglePanel('dispatcher')"
+    [class.active-btn]="showDispatcherPanel">
     <mat-icon>{{ showDispatcherPanel ? 'chevron_right' : 'chevron_left' }}</mat-icon>
-    {{ showDispatcherPanel ? '隐藏调度台' : '显示调度台' }}
+    调度台
   </button>
-  <button mat-button (click)="showConfigPanel = !showConfigPanel">
+  <button mat-button (click)="togglePanel('config')"
+    [class.active-btn]="showConfigPanel">
     <mat-icon>settings</mat-icon>
-    {{ showConfigPanel ? '隐藏配置' : '显示配置' }}
+    配置
   </button>
 </mat-toolbar>
 
@@ -33,13 +72,25 @@
   </div>
 
   <div class="side-panels">
-    <div class="fault-panel-container" *ngIf="showFaultPanel">
+    <div class="panel-wrapper" *ngIf="showUserPanel">
+      <app-user-panel></app-user-panel>
+    </div>
+    <div class="panel-wrapper" *ngIf="showApprovalPanel">
+      <app-approval-panel></app-approval-panel>
+    </div>
+    <div class="panel-wrapper" *ngIf="showHandoverPanel">
+      <app-shift-handover-panel></app-shift-handover-panel>
+    </div>
+    <div class="panel-wrapper" *ngIf="showAuditPanel && canViewAudit">
+      <app-audit-log-panel></app-audit-log-panel>
+    </div>
+    <div class="panel-wrapper" *ngIf="showFaultPanel">
       <app-fault-panel></app-fault-panel>
     </div>
-    <div class="dispatcher-panel" *ngIf="showDispatcherPanel">
+    <div class="panel-wrapper" *ngIf="showDispatcherPanel">
       <app-dispatcher-panel></app-dispatcher-panel>
     </div>
-    <div class="config-panel" *ngIf="showConfigPanel">
+    <div class="panel-wrapper" *ngIf="showConfigPanel">
       <app-config-panel></app-config-panel>
     </div>
   </div>

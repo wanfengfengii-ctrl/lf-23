@@ -9,6 +9,8 @@ import { MatBadgeModule } from '@angular/material/badge';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatChipsModule } from '@angular/material/chips';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import {
@@ -18,10 +20,15 @@ import {
   BlockRequest,
   DispatcherAction,
   Station,
+  Dispatcher,
+  DispatcherRole,
+  ROLE_COLORS,
 } from '../../models/railway.model';
 import { RouteControlService } from '../../services/route-control.service';
 import { RailwayDataService } from '../../services/railway-data.service';
 import { SimulationService } from '../../services/simulation.service';
+import { AuthService } from '../../services/auth.service';
+import { ApprovalService } from '../../services/approval.service';
 
 @Component({
   selector: 'app-dispatcher-panel',
@@ -37,6 +44,8 @@ import { SimulationService } from '../../services/simulation.service';
     MatTooltipModule,
     MatSelectModule,
     MatFormFieldModule,
+    MatSnackBarModule,
+    MatChipsModule,
     FormsModule,
   ],
   templateUrl: './dispatcher-panel.component.html',
@@ -50,6 +59,11 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
   blockRequests: BlockRequest[] = [];
   dispatcherActions: DispatcherAction[] = [];
 
+  currentDispatcher: Dispatcher | null = null;
+  currentRole: DispatcherRole | null = null;
+
+  pendingApprovalCount = 0;
+
   selectedStationId = '';
   selectedTargetStationId = '';
 
@@ -58,7 +72,10 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
   constructor(
     private routeControlService: RouteControlService,
     private railwayDataService: RailwayDataService,
-    private simulationService: SimulationService
+    private simulationService: SimulationService,
+    private authService: AuthService,
+    private approvalService: ApprovalService,
+    private snackBar: MatSnackBar
   ) {}
 
   ngOnInit(): void {
@@ -100,6 +117,19 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
         this.dispatcherActions = [...actions].reverse().slice(0, 50);
       })
     );
+
+    this.subscriptions.push(
+      this.authService.currentSession$.subscribe(session => {
+        this.currentDispatcher = session?.dispatcher || null;
+        this.currentRole = session?.dispatcher?.role || null;
+      })
+    );
+
+    this.subscriptions.push(
+      this.approvalService.pendingApprovals$.subscribe(approvals => {
+        this.pendingApprovalCount = approvals.length;
+      })
+    );
   }
 
   ngOnDestroy(): void {
@@ -108,13 +138,25 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
 
   onSetRoute(routeId: string): void {
     const result = this.simulationService.setRoute(routeId);
-    if (!result.success && result.conflict) {
-      console.warn('进路排列失败:', result.conflict.message);
+    if (result.pendingApproval) {
+      this.snackBar.open('操作已提交审批，请等待批准', '知道了', { duration: 3000 });
+    } else if (!result.success) {
+      if (result.message) {
+        this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
+      }
+      if (result.conflict) {
+        console.warn('进路排列失败:', result.conflict.message);
+      }
     }
   }
 
   onCancelRoute(routeId: string): void {
-    this.simulationService.cancelRoute(routeId);
+    const result = this.simulationService.cancelRoute(routeId);
+    if (result.pendingApproval) {
+      this.snackBar.open('操作已提交审批，请等待批准', '知道了', { duration: 3000 });
+    } else if (!result.success && result.message) {
+      this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
+    }
   }
 
   onToggleSignal(signalId: string): void {
@@ -123,8 +165,10 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
 
     const newState = signal.state === 'clear' ? 'stop' : 'clear';
     const result = this.simulationService.setSignalManual(signalId, newState);
-    if (!result.success && result.message) {
-      alert(result.message);
+    if (result.pendingApproval) {
+      this.snackBar.open('操作已提交审批，请等待批准', '知道了', { duration: 3000 });
+    } else if (!result.success && result.message) {
+      this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
     }
   }
 
@@ -133,22 +177,39 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
     if (!sw || sw.isLocked) return;
 
     const newPosition = sw.position === 'normal' ? 'reverse' : 'normal';
-    this.simulationService.setSwitchPosition(switchId, newPosition);
+    const result = this.simulationService.setSwitchPosition(switchId, newPosition);
+    if (result.pendingApproval) {
+      this.snackBar.open('操作已提交审批，请等待批准', '知道了', { duration: 3000 });
+    } else if (!result.success && result.message) {
+      this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
+    }
   }
 
   onConfirmRequest(requestId: string, confirm: boolean): void {
-    this.simulationService.confirmBlockRequest(requestId, confirm);
+    const result = this.simulationService.confirmBlockRequest(requestId, confirm);
+    if (result.pendingApproval) {
+      this.snackBar.open('操作已提交审批，请等待批准', '知道了', { duration: 3000 });
+    } else if (!result.success && result.message) {
+      this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
+    }
   }
 
   onRequestBlock(): void {
     if (!this.selectedStationId || !this.selectedTargetStationId) return;
     if (this.selectedStationId === this.selectedTargetStationId) return;
 
-    this.simulationService.requestBlock(
+    const result = this.simulationService.requestBlock(
       this.selectedStationId,
       this.selectedTargetStationId
     );
+    if (!result.success && result.message) {
+      this.snackBar.open(result.message, '关闭', { duration: 4000, panelClass: ['error-snackbar'] });
+    }
     this.selectedTargetStationId = '';
+  }
+
+  getRoleColor(): string {
+    return this.currentRole ? ROLE_COLORS[this.currentRole] : '#757575';
   }
 
   getAvailableTargetStations(): Station[] {

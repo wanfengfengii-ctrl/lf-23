@@ -1,0 +1,192 @@
+<mat-card class="handover-panel">
+  <mat-card-header>
+    <mat-card-title>
+      <mat-icon>swap_horiz</mat-icon>
+      交接班管理
+    </mat-card-title>
+    <mat-card-subtitle>
+      <span *ngIf="canHandover">同角色人员之间进行工作交接</span>
+      <span *ngIf="!canHandover && currentDispatcher" style="color: #ff9800;">
+        当前角色无交接班权限
+      </span>
+    </mat-card-subtitle>
+  </mat-card-header>
+  <mat-divider></mat-divider>
+  <mat-card-content>
+    <div class="action-bar">
+      <button
+        mat-raised-button
+        color="primary"
+        (click)="onCreateHandover()"
+        [disabled]="!canHandover || !currentDispatcher"
+      >
+        <mat-icon>send</mat-icon>
+        发起交接班
+      </button>
+      <div *ngIf="getPendingCount() > 0" class="pending-notice">
+        <mat-icon style="color: #ff9800;">notifications_active</mat-icon>
+        <span>有 {{ getPendingCount() }} 个待您接收的交接</span>
+      </div>
+    </div>
+
+    <div *ngIf="myPendingHandovers.length > 0" class="section">
+      <div class="section-title">
+        <mat-icon style="color: #ff9800;">pending</mat-icon>
+        待接收 ({{ myPendingHandovers.length }})
+      </div>
+      <div class="handover-list">
+        <div
+          *ngFor="let handover of myPendingHandovers"
+          class="handover-item pending"
+        >
+          <div class="handover-users">
+            <div class="user-block">
+              <div
+                class="avatar"
+                [style.background]="getRoleColor(handover.fromRole)"
+              >{{ handover.fromDispatcherName.charAt(0) }}</div>
+              <div class="user-info">
+                <div class="user-name">{{ handover.fromDispatcherName }}</div>
+                <div class="user-role">{{ getRoleLabel(handover.fromRole) }}</div>
+              </div>
+            </div>
+            <div class="arrow">
+              <mat-icon>arrow_forward</mat-icon>
+            </div>
+            <div class="user-block">
+              <div
+                class="avatar"
+                [style.background]="getRoleColor(handover.toRole)"
+              >{{ handover.toDispatcherName.charAt(0) }}</div>
+              <div class="user-info">
+                <div class="user-name">{{ handover.toDispatcherName }}</div>
+                <div class="user-role">{{ getRoleLabel(handover.toRole) }}</div>
+              </div>
+            </div>
+          </div>
+          <div *ngIf="handover.notes" class="handover-notes">
+            <mat-icon style="font-size: 16px; width: 16px; height: 16px;">note</mat-icon>
+            <span>{{ handover.notes }}</span>
+          </div>
+          <div *ngIf="handover.pendingItems.length > 0" class="handover-items">
+            <div
+              *ngFor="let item of handover.pendingItems"
+              class="handover-item-detail"
+            >
+              <mat-icon>{{ getItemIcon(item.type) }}</mat-icon>
+              <div>
+                <div class="item-name">{{ item.targetName }}</div>
+                <div class="item-desc">{{ item.description }}</div>
+              </div>
+              <mat-chip highlighted class="priority" [ngClass]="'priority-' + item.priority">
+                {{ item.priority === 'high' ? '高' : item.priority === 'medium' ? '中' : '低' }}
+              </mat-chip>
+            </div>
+          </div>
+          <div class="handover-meta">
+            <span class="time">
+              <mat-icon style="font-size: 14px; width: 14px; height: 14px;">schedule</mat-icon>
+              发起于 {{ formatTime(handover.handoverTime) }}
+            </span>
+          </div>
+          <div class="handover-actions">
+            <button
+              mat-raised-button
+              color="primary"
+              (click)="onConfirmHandover(handover)"
+            >
+              <mat-icon>check_circle</mat-icon>
+              确认接收
+            </button>
+            <button
+              mat-stroked-button
+              (click)="onCancelHandover(handover.id)"
+            >
+              <mat-icon>close</mat-icon>
+              拒绝
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="myInitiatedHandovers.length > 0" class="section">
+      <div class="section-title">
+        <mat-icon>history</mat-icon>
+        我发起的
+      </div>
+      <div class="handover-list">
+        <div
+          *ngFor="let handover of myInitiatedHandovers"
+          class="handover-item"
+          [ngClass]="handover.status"
+        >
+          <div class="handover-users">
+            <div class="user-block">
+              <div class="avatar" [style.background]="getRoleColor(handover.fromRole)">
+                {{ handover.fromDispatcherName.charAt(0) }}
+              </div>
+              <div class="user-info">
+                <div class="user-name">{{ handover.fromDispatcherName }}</div>
+              </div>
+            </div>
+            <mat-icon>arrow_forward</mat-icon>
+            <div class="user-block">
+              <div class="avatar" [style.background]="getRoleColor(handover.toRole)">
+                {{ handover.toDispatcherName.charAt(0) }}
+              </div>
+              <div class="user-info">
+                <div class="user-name">{{ handover.toDispatcherName }}</div>
+              </div>
+            </div>
+            <div style="flex: 1;"></div>
+            <mat-chip highlighted [ngClass]="'status-' + handover.status">
+              {{ handover.status === 'pending' ? '等待确认' : handover.status === 'completed' ? '已完成' : '已取消' }}
+            </mat-chip>
+          </div>
+          <div *ngIf="handover.status === 'pending'" class="handover-actions">
+            <button
+              mat-stroked-button
+              color="warn"
+              (click)="onCancelHandover(handover.id)"
+            >
+              <mat-icon>cancel</mat-icon>
+              撤回
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="completedHandovers.length > 0" class="section">
+      <div class="section-title">
+        <mat-icon>done_all</mat-icon>
+        历史交接
+      </div>
+      <div class="handover-list compact">
+        <div
+          *ngFor="let handover of completedHandovers"
+          class="handover-item completed compact"
+        >
+          <div class="handover-users">
+            <span>{{ handover.fromDispatcherName }}</span>
+            <mat-icon style="font-size: 16px;">arrow_forward</mat-icon>
+            <span>{{ handover.toDispatcherName }}</span>
+          </div>
+          <div class="handover-meta">
+            <span class="time">{{ formatTime(handover.handoverTime) }}</span>
+            <mat-chip highlighted class="status-completed">完成</mat-chip>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      *ngIf="myPendingHandovers.length === 0 && myInitiatedHandovers.length === 0 && completedHandovers.length === 0"
+      class="empty-state"
+    >
+      <mat-icon style="font-size: 48px; opacity: 0.3;">swap_horiz</mat-icon>
+      <p>暂无交接班记录</p>
+    </div>
+  </mat-card-content>
+</mat-card>

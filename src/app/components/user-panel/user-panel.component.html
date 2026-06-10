@@ -1,0 +1,104 @@
+<mat-card class="user-panel">
+  <mat-card-header>
+    <mat-card-title>
+      <mat-icon>people_alt</mat-icon>
+      调度员值班
+    </mat-card-title>
+    <mat-card-subtitle>
+      <span *ngIf="currentSession" class="current-user">
+        当前:
+        <span [style.color]="getRoleColor(currentSession.dispatcher.role)">
+          {{ currentSession.dispatcher.realName }}
+        </span>
+        ({{ getRoleLabel(currentSession.dispatcher.role) }})
+      </span>
+      <span *ngIf="!currentSession" class="no-user">
+        <mat-icon style="vertical-align: middle;">warning</mat-icon>
+        未登录
+      </span>
+    </mat-card-subtitle>
+  </mat-card-header>
+  <mat-divider></mat-divider>
+  <mat-card-content>
+    <div class="dispatchers-list">
+      <div
+        *ngFor="let dispatcher of allDispatchers"
+        class="dispatcher-item"
+        [class.current]="isCurrent(dispatcher.id)"
+        [class.active]="isActive(dispatcher.id)"
+      >
+        <div class="dispatcher-avatar" [style.background]="getRoleColor(dispatcher.role)">
+          {{ dispatcher.realName.charAt(0) }}
+        </div>
+        <div class="dispatcher-info">
+          <div class="dispatcher-name">
+            {{ dispatcher.realName }}
+            <span *ngIf="isCurrent(dispatcher.id)" class="status-badge current-badge">
+              <mat-icon>check_circle</mat-icon>
+              当前
+            </span>
+            <span *ngIf="isActive(dispatcher.id) && !isCurrent(dispatcher.id)" class="status-badge active-badge">
+              <mat-icon>circle</mat-icon>
+              在线
+            </span>
+          </div>
+          <div class="dispatcher-role">
+            <mat-chip-listbox>
+              <mat-chip
+                highlighted
+                [style.background]="getRoleColor(dispatcher.role) + '22'"
+                [style.color]="getRoleColor(dispatcher.role)"
+              >
+                {{ getRoleLabel(dispatcher.role) }}
+              </mat-chip>
+            </mat-chip-listbox>
+          </div>
+          <div class="dispatcher-perms">
+            <span *ngFor="let perm of getPermissionsSummary(dispatcher.role)" class="perm-tag">
+              {{ perm }}
+            </span>
+          </div>
+          <div *ngIf="isActive(dispatcher.id)" class="dispatcher-login-time">
+            <mat-icon style="font-size: 14px; width: 14px; height: 14px;">schedule</mat-icon>
+            登录于 {{ formatTime(dispatcher.loginTime) }}
+          </div>
+        </div>
+        <div class="dispatcher-actions">
+          <ng-container *ngIf="!isActive(dispatcher.id)">
+            <button
+              mat-raised-button
+              color="primary"
+              class="action-btn"
+              (click)="onLogin(dispatcher)"
+              matTooltip="登录该账户"
+            >
+              <mat-icon>login</mat-icon>
+              登录
+            </button>
+          </ng-container>
+          <ng-container *ngIf="isActive(dispatcher.id) && !isCurrent(dispatcher.id)">
+            <button
+              mat-stroked-button
+              class="action-btn"
+              (click)="onSwitch(dispatcher)"
+              matTooltip="切换到此用户"
+            >
+              <mat-icon>swap_horiz</mat-icon>
+              切换
+            </button>
+          </ng-container>
+          <ng-container *ngIf="isActive(dispatcher.id)">
+            <button
+              mat-icon-button
+              color="warn"
+              (click)="onLogout(dispatcher.id)"
+              matTooltip="登出"
+            >
+              <mat-icon>logout</mat-icon>
+            </button>
+          </ng-container>
+        </div>
+      </div>
+    </div>
+  </mat-card-content>
+</mat-card>

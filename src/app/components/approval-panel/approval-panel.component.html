@@ -1,0 +1,149 @@
+<mat-card class="approval-panel">
+  <mat-card-header>
+    <mat-card-title>
+      <mat-icon>how_to_reg</mat-icon>
+      操作审批中心
+    </mat-card-title>
+    <mat-card-subtitle>
+      <span *ngIf="canApprove" class="has-approve-perm">
+        <mat-icon style="vertical-align: middle;">verified_user</mat-icon>
+        您具有审批权限
+      </span>
+      <span *ngIf="!canApprove && currentDispatcher" class="no-approve-perm">
+        仅可查看/撤回自己的申请
+      </span>
+    </mat-card-subtitle>
+  </mat-card-header>
+  <mat-divider></mat-divider>
+
+  <mat-tab-group [(selectedIndex)]="selectedTab" animationDuration="0ms">
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon style="font-size: 18px; margin-right: 4px;">pending</mat-icon>
+        待审批
+        <span *ngIf="getPendingCount() > 0" class="tab-badge">{{ getPendingCount() }}</span>
+      </ng-template>
+
+      <div class="approvals-list">
+        <div *ngIf="pendingApprovals.length === 0" class="empty-state">
+          <mat-icon>check_circle_outline</mat-icon>
+          <p>暂无待审批申请</p>
+        </div>
+
+        <div
+          *ngFor="let approval of pendingApprovals"
+          class="approval-item pending"
+        >
+          <div class="approval-header">
+            <div class="approval-icon" [style.background]="getRoleColor(approval.requestorRole) + '22'">
+              <mat-icon [style.color]="getRoleColor(approval.requestorRole)">{{ getTargetTypeIcon(approval.targetType) }}</mat-icon>
+            </div>
+            <div class="approval-header-info">
+              <div class="approval-title">
+                <span class="action-type">{{ getActionTypeLabel(approval.actionType) }}</span>
+                <span class="target-name">: {{ approval.targetName }}</span>
+              </div>
+              <div class="approval-meta">
+                <span class="requestor">
+                  <span [style.color]="getRoleColor(approval.requestorRole)">{{ approval.requestorName }}</span>
+                  ({{ getRoleLabel(approval.requestorRole) }})
+                </span>
+                <span class="time">
+                  <mat-icon>schedule</mat-icon>
+                  {{ formatTime(approval.requestTime) }}
+                </span>
+              </div>
+            </div>
+            <div class="approval-status">
+              <mat-chip highlighted class="status-pending">待审批</mat-chip>
+            </div>
+          </div>
+
+          <div class="approval-actions" *ngIf="canApprove || isMyRequest(approval)">
+            <ng-container *ngIf="canApprove">
+              <button
+                mat-raised-button
+                color="primary"
+                class="action-btn"
+                (click)="onApprove(approval)"
+                matTooltip="批准该申请"
+              >
+                <mat-icon>check</mat-icon>
+                批准
+              </button>
+              <button
+                mat-raised-button
+                color="warn"
+                class="action-btn"
+                (click)="onReject(approval)"
+                matTooltip="驳回该申请"
+              >
+                <mat-icon>close</mat-icon>
+                驳回
+              </button>
+            </ng-container>
+            <button
+              *ngIf="isMyRequest(approval)"
+              mat-stroked-button
+              class="action-btn"
+              (click)="onCancel(approval)"
+              matTooltip="撤回申请"
+            >
+              <mat-icon>undo</mat-icon>
+              撤回
+            </button>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab>
+      <ng-template mat-tab-label>
+        <mat-icon style="font-size: 18px; margin-right: 4px;">history</mat-icon>
+        历史记录
+      </ng-template>
+
+      <div class="approvals-list">
+        <div *ngIf="allApprovals.length === 0" class="empty-state">
+          <mat-icon>history</mat-icon>
+          <p>暂无历史记录</p>
+        </div>
+
+        <div
+          *ngFor="let approval of allApprovals"
+          class="approval-item"
+          [ngClass]="approval.status"
+        >
+          <div class="approval-header">
+            <div class="approval-icon" [style.background]="getRoleColor(approval.requestorRole) + '22'">
+              <mat-icon [style.color]="getRoleColor(approval.requestorRole)">{{ getTargetTypeIcon(approval.targetType) }}</mat-icon>
+            </div>
+            <div class="approval-header-info">
+              <div class="approval-title">
+                <span class="action-type">{{ getActionTypeLabel(approval.actionType) }}</span>
+                <span class="target-name">: {{ approval.targetName }}</span>
+              </div>
+              <div class="approval-meta">
+                <span class="requestor">
+                  {{ approval.requestorName }} ({{ getRoleLabel(approval.requestorRole) }})
+                </span>
+                <span *ngIf="approval.approverName" class="approver">
+                  → {{ approval.approverName }}
+                </span>
+              </div>
+            </div>
+            <div class="approval-status">
+              <mat-chip highlighted [ngClass]="getStatusClass(approval.status)">
+                {{ getStatusLabel(approval.status) }}
+              </mat-chip>
+            </div>
+          </div>
+          <div *ngIf="approval.rejectReason" class="reject-reason">
+            <mat-icon style="color: #f44336;">report</mat-icon>
+            <span>驳回原因：{{ approval.rejectReason }}</span>
+          </div>
+        </div>
+      </div>
+    </mat-tab>
+  </mat-tab-group>
+</mat-card>

@@ -14,11 +14,19 @@ import {
   BlockRequest,
   FaultSimulationState,
   FaultType,
+  OperationApproval,
+  ApprovalActionType,
+  AuditActionResult,
+  PermissionViolation,
 } from '../models/railway.model';
 import { RailwayDataService } from './railway-data.service';
 import { PlaybackService } from './playback.service';
 import { RouteControlService } from './route-control.service';
 import { FaultSimulationService } from './fault-simulation.service';
+import { AuthService } from './auth.service';
+import { ApprovalService } from './approval.service';
+import { AuditService } from './audit.service';
+import { ShiftHandoverService } from './shift-handover.service';
 
 @Injectable({
   providedIn: 'root',
@@ -46,15 +54,119 @@ export class SimulationService implements OnDestroy {
   private nextActionId = 1;
   private nextRequestId = 1;
 
+  private permissionAlertSubject = new BehaviorSubject<{ message: string; reason: string; permission?: string } | null>(null);
+  permissionAlert$: Observable<{ message: string; reason: string; permission?: string } | null> = this.permissionAlertSubject.asObservable();
+
   constructor(
     private railwayDataService: RailwayDataService,
     private playbackService: PlaybackService,
     private routeControlService: RouteControlService,
-    private faultSimulationService: FaultSimulationService
-  ) {}
+    private faultSimulationService: FaultSimulationService,
+    private authService: AuthService,
+    private approvalService: ApprovalService,
+    private auditService: AuditService,
+    private shiftHandoverService: ShiftHandoverService
+  ) {
+    this.setupApprovalListener();
+  }
 
   ngOnDestroy(): void {
     this.stop();
+  }
+
+  private setupApprovalListener(): void {
+    this.approvalService.approvalResult$.subscribe(result => {
+      if (!result) return;
+      const { approval, actionData } = result;
+      if (approval.status === 'approved') {
+        this.executeApprovedAction(approval.actionType, actionData);
+      }
+    });
+  }
+
+  private executeApprovedAction(actionType: ApprovalActionType, data: any): void {
+    switch (actionType) {
+      case 'set_route':
+        this.setRouteInternal(data.routeId, true);
+        break;
+      case 'cancel_route':
+        this.cancelRouteInternal(data.routeId, true);
+        break;
+      case 'manual_signal':
+        this.setSignalManualInternal(data.signalId, data.state, true);
+        break;
+      case 'switch_position':
+        this.setSwitchPositionInternal(data.switchId, data.position, true);
+        break;
+      case 'block_confirm':
+        this.confirmBlockRequestInternal(data.requestId, data.confirm, true);
+        break;
+      case 'block_section':
+        this.faultSimulationService.blockSection(data.faultId, data.blockSectionId);
+        break;
+      case 'unblock_section':
+        this.faultSimulationService.unblockSection(data.faultId, data.blockSectionId);
+        break;
+      case 'resolve_fault':
+        this.faultSimulationService.resolveFault(data.faultId);
+        break;
+      case 'speed_restriction':
+        this.faultSimulationService.setSpeedRestriction(
+          data.blockSectionId,
+          data.maxSpeed,
+          data.reason,
+          data.faultId
+        );
+        break;
+      case 'lift_speed_restriction':
+        this.faultSimulationService.liftSpeedRestriction(data.blockSectionId, data.faultId);
+        break;
+    }
+  }
+
+  private syncSimTimeToServices(): void {
+    const currentTime = this.stateSubject.value.currentTime;
+    this.authService.setSimTime(currentTime);
+    this.approvalService.setSimTime(currentTime);
+    this.auditService.setSimTime(currentTime);
+    this.shiftHandoverService.setSimTime(currentTime);
+  }
+
+  private triggerPermissionAlert(message: string, reason: string, permission?: string): void {
+    this.permissionAlertSubject.next({ message, reason, permission });
+  }
+
+  dismissPermissionAlert(): void {
+    this.permissionAlertSubject.next(null);
+  }
+
+  private recordAuditWithResult(
+    actionType: string,
+    targetId: string,
+    targetName: string,
+    targetType: string,
+    result: AuditActionResult,
+    details: any,
+    rejectionReason?: string
+  ): void {
+    this.auditService.record({
+      actionType,
+      targetId,
+      targetName,
+      targetType,
+      result,
+      details,
+      rejectionReason,
+    });
+  }
+
+  getDispatcherName(): string {
+    return this.authService.getCurrentDispatcher()?.realName || '未登录';
+  }
+
+  getCurrentRoleLabel(): string {
+    const role = this.authService.getCurrentRole();
+    return role ? this.authService.getRoleLabel(role) : '';
   }
 
   getState(): SimulationState {
@@ -219,6 +331,10 @@ export class SimulationService implements OnDestroy {
       currentTime: newTime,
     });
 
+    this.syncSimTimeToServices();
+
+    this.authService.touchCurrentSession();
+
     const events = this.eventsSubject.value;
     const pendingEvents = events.filter(e => e.timestamp <= newTime && e.timestamp > state.currentTime);
 
@@ -236,6 +352,18 @@ export class SimulationService implements OnDestroy {
     this.checkFaultViolations();
 
     if (state.mode === 'live') {
+      const currentDispatcher = this.authService.getCurrentDispatcher();
+      const permissionViolations: PermissionViolation[] = [];
+      const multiDispatcherState = {
+        activeDispatchers: this.authService.getActiveSessions(),
+        currentDispatcherId: currentDispatcher?.id || null,
+        shiftHandovers: this.shiftHandoverService.getHandovers(),
+        pendingApprovals: this.approvalService.getApprovals(),
+        auditLogs: this.auditService.getAuditLogs(),
+        permissionViolations,
+        concurrentConflicts: this.auditService.getConcurrentConflicts(),
+      };
+
       this.playbackService.recordState({
         time: newTime,
         trains: this.railwayDataService.getTrains(),
@@ -245,6 +373,14 @@ export class SimulationService implements OnDestroy {
         routes: this.routeControlService.getRoutes(),
         dispatcherActions: this.dispatcherActionsSubject.value,
         faultState: this.faultSimulationService.getState(),
+        multiDispatcherState,
+        auditLogs: multiDispatcherState.auditLogs,
+        activeSessions: multiDispatcherState.activeDispatchers,
+        currentDispatcherId: multiDispatcherState.currentDispatcherId,
+        pendingApprovals: multiDispatcherState.pendingApprovals,
+        shiftHandovers: multiDispatcherState.shiftHandovers,
+        permissionViolations: multiDispatcherState.permissionViolations,
+        concurrentConflicts: multiDispatcherState.concurrentConflicts,
       });
     }
   }
@@ -779,7 +915,50 @@ export class SimulationService implements OnDestroy {
     this.eventsSubject.next(events);
   }
 
-  setRoute(routeId: string): { success: boolean; conflict?: ConflictAlert } {
+  setRoute(routeId: string): { success: boolean; conflict?: ConflictAlert; pendingApproval?: OperationApproval; message?: string } {
+    const route = this.routeControlService.getRouteById(routeId);
+    if (!route) {
+      return { success: false, conflict: { message: '进路不存在', type: 'invalid_route' } };
+    }
+
+    const startSignal = this.railwayDataService.getSignalById(route.startSignalId);
+    const endSignal = this.railwayDataService.getSignalById(route.endSignalId);
+    const startStationId = startSignal?.stationId || '';
+    const endStationId = endSignal?.stationId || '';
+
+    const permissionCheck = this.authService.canOperateRoute(routeId, startStationId, endStationId);
+    if (!permissionCheck.allowed) {
+      this.triggerPermissionAlert(`越权操作：排列进路「${route.name}」`, permissionCheck.reason || '无权限');
+      this.authService.recordViolation('set_route', 'canSetRoute', routeId, route.name, permissionCheck.reason || '无权限');
+      this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'blocked', { routeId, routeName: route.name }, permissionCheck.reason);
+      return { success: false, message: permissionCheck.reason };
+    }
+
+    const conflictCheck = this.auditService.checkConcurrentConflict(routeId, route.name, 'route', 'set_route');
+    if (conflictCheck.conflict) {
+      this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'blocked', { routeId }, conflictCheck.reason);
+      return { success: false, message: conflictCheck.reason };
+    }
+
+    if (this.approvalService.requiresApproval('set_route')) {
+      const approvalResult = this.approvalService.submitForApproval({
+        actionType: 'set_route',
+        targetId: routeId,
+        targetName: route.name,
+        targetType: 'route',
+        actionData: { routeId, routeName: route.name },
+      });
+      if (approvalResult.success && approvalResult.approval) {
+        this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'pending_approval', { routeId, approvalId: approvalResult.approval.id });
+        this.auditService.releaseOperation(routeId, 'route');
+        return { success: false, pendingApproval: approvalResult.approval, message: '操作已提交审批，请等待批准' };
+      }
+    }
+
+    return this.setRouteInternal(routeId, false);
+  }
+
+  private setRouteInternal(routeId: string, fromApproval: boolean): { success: boolean; conflict?: ConflictAlert } {
     const route = this.routeControlService.getRouteById(routeId);
     if (!route) {
       return { success: false, conflict: { message: '进路不存在', type: 'invalid_route' } };
@@ -790,6 +969,8 @@ export class SimulationService implements OnDestroy {
       switchIds: route.switchIds,
     });
     if (!safetyCheck.safe) {
+      this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'failed', { routeId }, safetyCheck.reason);
+      this.auditService.releaseOperation(routeId, 'route');
       return {
         success: false,
         conflict: {
@@ -803,6 +984,7 @@ export class SimulationService implements OnDestroy {
     const result = this.routeControlService.setRoute(routeId);
 
     if (result.success) {
+      const currentDispatcher = this.authService.getCurrentDispatcher();
       const event: SimulationEvent = {
         timestamp: this.stateSubject.value.currentTime,
         type: 'route_setup',
@@ -813,7 +995,7 @@ export class SimulationService implements OnDestroy {
       this.addDispatcherAction({
         type: 'set_route',
         data: { routeId },
-        operator: 'dispatcher',
+        operator: currentDispatcher?.realName || 'dispatcher',
       });
 
       const activeFaults = this.faultSimulationService.getActiveFaults();
@@ -825,16 +1007,78 @@ export class SimulationService implements OnDestroy {
         );
       }
 
+      this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'success', {
+        routeId,
+        fromApproval,
+        approver: fromApproval ? this.authService.getCurrentDispatcher()?.realName : undefined,
+      });
+
       this.checkWaitingTrains();
+    } else {
+      this.recordAuditWithResult('set_route', routeId, route.name, 'route', 'failed', { routeId, conflict: result.conflict }, result.conflict?.message);
     }
 
+    this.auditService.releaseOperation(routeId, 'route');
     return result;
   }
 
-  cancelRoute(routeId: string): boolean {
+  cancelRoute(routeId: string): { success: boolean; message?: string; pendingApproval?: OperationApproval } {
+    const route = this.routeControlService.getRouteById(routeId);
+    if (!route) {
+      return { success: false, message: '进路不存在' };
+    }
+
+    const startSignal = this.railwayDataService.getSignalById(route.startSignalId);
+    const endSignal = this.railwayDataService.getSignalById(route.endSignalId);
+    const startStationId = startSignal?.stationId || '';
+    const endStationId = endSignal?.stationId || '';
+
+    if (!this.authService.hasPermission('canCancelRoute')) {
+      this.triggerPermissionAlert(`越权操作：取消进路「${route.name}」`, '无取消进路权限');
+      this.authService.recordViolation('cancel_route', 'canCancelRoute', routeId, route.name, '无取消进路权限');
+      this.recordAuditWithResult('cancel_route', routeId, route.name, 'route', 'blocked', { routeId }, '无取消进路权限');
+      return { success: false, message: '无取消进路权限' };
+    }
+
+    const permissionCheck = this.authService.canOperateRoute(routeId, startStationId, endStationId);
+    if (!permissionCheck.allowed) {
+      this.triggerPermissionAlert(`越权操作：取消进路「${route.name}」`, permissionCheck.reason || '无权限');
+      this.authService.recordViolation('cancel_route', 'canCancelRoute', routeId, route.name, permissionCheck.reason || '无权限');
+      this.recordAuditWithResult('cancel_route', routeId, route.name, 'route', 'blocked', { routeId }, permissionCheck.reason);
+      return { success: false, message: permissionCheck.reason };
+    }
+
+    const conflictCheck = this.auditService.checkConcurrentConflict(routeId, route.name, 'route', 'cancel_route');
+    if (conflictCheck.conflict) {
+      this.recordAuditWithResult('cancel_route', routeId, route.name, 'route', 'blocked', { routeId }, conflictCheck.reason);
+      return { success: false, message: conflictCheck.reason };
+    }
+
+    if (this.approvalService.requiresApproval('cancel_route')) {
+      const approvalResult = this.approvalService.submitForApproval({
+        actionType: 'cancel_route',
+        targetId: routeId,
+        targetName: route.name,
+        targetType: 'route',
+        actionData: { routeId, routeName: route.name },
+      });
+      if (approvalResult.success && approvalResult.approval) {
+        this.recordAuditWithResult('cancel_route', routeId, route.name, 'route', 'pending_approval', { routeId, approvalId: approvalResult.approval.id });
+        this.auditService.releaseOperation(routeId, 'route');
+        return { success: false, pendingApproval: approvalResult.approval, message: '操作已提交审批，请等待批准' };
+      }
+    }
+
+    return this.cancelRouteInternal(routeId, false);
+  }
+
+  private cancelRouteInternal(routeId: string, fromApproval: boolean): { success: boolean } {
+    const route = this.routeControlService.getRouteById(routeId);
+    const routeName = route?.name || routeId;
     const success = this.routeControlService.cancelRoute(routeId);
 
     if (success) {
+      const currentDispatcher = this.authService.getCurrentDispatcher();
       const event: SimulationEvent = {
         timestamp: this.stateSubject.value.currentTime,
         type: 'route_cancel',
@@ -845,14 +1089,63 @@ export class SimulationService implements OnDestroy {
       this.addDispatcherAction({
         type: 'cancel_route',
         data: { routeId },
-        operator: 'dispatcher',
+        operator: currentDispatcher?.realName || 'dispatcher',
       });
+
+      this.recordAuditWithResult('cancel_route', routeId, routeName, 'route', 'success', {
+        routeId,
+        fromApproval,
+      });
+    } else {
+      this.recordAuditWithResult('cancel_route', routeId, routeName, 'route', 'failed', { routeId }, '进路状态不允许取消');
     }
 
-    return success;
+    this.auditService.releaseOperation(routeId, 'route');
+    return { success };
   }
 
-  setSignalManual(signalId: string, state: 'clear' | 'stop'): { success: boolean; message?: string } {
+  setSignalManual(signalId: string, state: 'clear' | 'stop'): { success: boolean; message?: string; pendingApproval?: OperationApproval } {
+    const signal = this.railwayDataService.getSignalById(signalId);
+    if (!signal) {
+      return { success: false, message: '信号机不存在' };
+    }
+
+    const permissionCheck = this.authService.canOperateSignal(signalId, signal.stationId);
+    if (!permissionCheck.allowed) {
+      this.triggerPermissionAlert(`越权操作：信号机「${signal.name}」`, permissionCheck.reason || '无权限');
+      this.authService.recordViolation('manual_signal', 'canManualSignal', signalId, signal.name, permissionCheck.reason || '无权限');
+      this.recordAuditWithResult('manual_signal', signalId, signal.name, 'signal', 'blocked', { signalId, state }, permissionCheck.reason);
+      return { success: false, message: permissionCheck.reason };
+    }
+
+    const conflictCheck = this.auditService.checkConcurrentConflict(signalId, signal.name, 'signal', 'manual_signal');
+    if (conflictCheck.conflict) {
+      this.recordAuditWithResult('manual_signal', signalId, signal.name, 'signal', 'blocked', { signalId, state }, conflictCheck.reason);
+      return { success: false, message: conflictCheck.reason };
+    }
+
+    if (this.approvalService.requiresApproval('manual_signal')) {
+      const approvalResult = this.approvalService.submitForApproval({
+        actionType: 'manual_signal',
+        targetId: signalId,
+        targetName: signal.name,
+        targetType: 'signal',
+        actionData: { signalId, signalName: signal.name, state },
+      });
+      if (approvalResult.success && approvalResult.approval) {
+        this.recordAuditWithResult('manual_signal', signalId, signal.name, 'signal', 'pending_approval', { signalId, state, approvalId: approvalResult.approval.id });
+        this.auditService.releaseOperation(signalId, 'signal');
+        return { success: false, pendingApproval: approvalResult.approval, message: '操作已提交审批，请等待批准' };
+      }
+    }
+
+    return this.setSignalManualInternal(signalId, state, false);
+  }
+
+  private setSignalManualInternal(signalId: string, state: 'clear' | 'stop', fromApproval: boolean): { success: boolean; message?: string } {
+    const signal = this.railwayDataService.getSignalById(signalId);
+    const signalName = signal?.name || signalId;
+
     if (state === 'clear') {
       const safetyCheck = this.faultSimulationService.checkOperationSafety('signal_clear', {
         signalId,
@@ -863,6 +1156,8 @@ export class SimulationService implements OnDestroy {
           type: 'invalid_route',
         };
         this.triggerFaultViolation(conflict);
+        this.recordAuditWithResult('manual_signal', signalId, signalName, 'signal', 'failed', { signalId, state }, safetyCheck.reason);
+        this.auditService.releaseOperation(signalId, 'signal');
         return { success: false, message: safetyCheck.reason };
       }
     }
@@ -870,6 +1165,7 @@ export class SimulationService implements OnDestroy {
     const result = this.routeControlService.setSignalManual(signalId, state);
 
     if (result.success) {
+      const currentDispatcher = this.authService.getCurrentDispatcher();
       const event: SimulationEvent = {
         timestamp: this.stateSubject.value.currentTime,
         type: 'manual_signal',
@@ -880,18 +1176,72 @@ export class SimulationService implements OnDestroy {
       this.addDispatcherAction({
         type: 'manual_signal',
         data: { signalId, state },
-        operator: 'dispatcher',
+        operator: currentDispatcher?.realName || 'dispatcher',
+      });
+
+      this.recordAuditWithResult('manual_signal', signalId, signalName, 'signal', 'success', {
+        signalId,
+        state,
+        fromApproval,
       });
 
       this.checkWaitingTrains();
+    } else {
+      this.recordAuditWithResult('manual_signal', signalId, signalName, 'signal', 'failed', { signalId, state }, result.message);
     }
 
+    this.auditService.releaseOperation(signalId, 'signal');
     return result;
   }
 
-  setSwitchPosition(switchId: string, position: 'normal' | 'reverse'): boolean {
+  setSwitchPosition(switchId: string, position: 'normal' | 'reverse'): { success: boolean; message?: string; pendingApproval?: OperationApproval } {
     const sw = this.railwayDataService.getSwitchById(switchId);
-    if (!sw || sw.isLocked) return false;
+    if (!sw) {
+      return { success: false, message: '道岔不存在' };
+    }
+    if (sw.isLocked) {
+      return { success: false, message: '道岔已锁闭' };
+    }
+
+    const permissionCheck = this.authService.canOperateSwitch(switchId, sw.stationId);
+    if (!permissionCheck.allowed) {
+      this.triggerPermissionAlert(`越权操作：道岔「${sw.name}」`, permissionCheck.reason || '无权限');
+      this.authService.recordViolation('switch_position', 'canSwitchPosition', switchId, sw.name, permissionCheck.reason || '无权限');
+      this.recordAuditWithResult('switch_position', switchId, sw.name, 'switch', 'blocked', { switchId, position }, permissionCheck.reason);
+      return { success: false, message: permissionCheck.reason };
+    }
+
+    const conflictCheck = this.auditService.checkConcurrentConflict(switchId, sw.name, 'switch', 'switch_position');
+    if (conflictCheck.conflict) {
+      this.recordAuditWithResult('switch_position', switchId, sw.name, 'switch', 'blocked', { switchId, position }, conflictCheck.reason);
+      return { success: false, message: conflictCheck.reason };
+    }
+
+    if (this.approvalService.requiresApproval('switch_position')) {
+      const approvalResult = this.approvalService.submitForApproval({
+        actionType: 'switch_position',
+        targetId: switchId,
+        targetName: sw.name,
+        targetType: 'switch',
+        actionData: { switchId, switchName: sw.name, position },
+      });
+      if (approvalResult.success && approvalResult.approval) {
+        this.recordAuditWithResult('switch_position', switchId, sw.name, 'switch', 'pending_approval', { switchId, position, approvalId: approvalResult.approval.id });
+        this.auditService.releaseOperation(switchId, 'switch');
+        return { success: false, pendingApproval: approvalResult.approval, message: '操作已提交审批，请等待批准' };
+      }
+    }
+
+    return this.setSwitchPositionInternal(switchId, position, false);
+  }
+
+  private setSwitchPositionInternal(switchId: string, position: 'normal' | 'reverse', fromApproval: boolean): { success: boolean; message?: string } {
+    const sw = this.railwayDataService.getSwitchById(switchId);
+    if (!sw || sw.isLocked) {
+      this.auditService.releaseOperation(switchId, 'switch');
+      return { success: false, message: sw?.isLocked ? '道岔已锁闭' : '道岔不存在' };
+    }
+    const switchName = sw.name;
 
     const safetyCheck = this.faultSimulationService.checkOperationSafety('switch_change', {
       switchId,
@@ -902,7 +1252,9 @@ export class SimulationService implements OnDestroy {
         type: 'invalid_route',
       };
       this.triggerFaultViolation(conflict);
-      return false;
+      this.recordAuditWithResult('switch_position', switchId, switchName, 'switch', 'failed', { switchId, position }, safetyCheck.reason);
+      this.auditService.releaseOperation(switchId, 'switch');
+      return { success: false, message: safetyCheck.reason };
     }
 
     this.railwayDataService.updateSwitch({
@@ -910,23 +1262,49 @@ export class SimulationService implements OnDestroy {
       position,
     });
 
+    const currentDispatcher = this.authService.getCurrentDispatcher();
     const event: SimulationEvent = {
       timestamp: this.stateSubject.value.currentTime,
       type: 'switch_change',
-      data: { switchId, position, switchName: sw.name },
+      data: { switchId, position, switchName },
     };
     this.addEvent(event);
 
     this.addDispatcherAction({
       type: 'switch_position',
       data: { switchId, position },
-      operator: 'dispatcher',
+      operator: currentDispatcher?.realName || 'dispatcher',
     });
 
-    return true;
+    this.recordAuditWithResult('switch_position', switchId, switchName, 'switch', 'success', {
+      switchId,
+      position,
+      fromApproval,
+    });
+
+    this.auditService.releaseOperation(switchId, 'switch');
+    return { success: true };
   }
 
-  requestBlock(fromStationId: string, toStationId: string, trainId?: string): BlockRequest {
+  requestBlock(fromStationId: string, toStationId: string, trainId?: string): { request?: BlockRequest; success: boolean; message?: string } {
+    if (!this.authService.hasPermission('canBlockRequest')) {
+      this.triggerPermissionAlert('越权操作：闭塞请求', '无闭塞请求权限');
+      this.authService.recordViolation('block_request', 'canBlockRequest', `${fromStationId}→${toStationId}`, '闭塞请求', '无闭塞请求权限');
+      return { success: false, message: '无闭塞请求权限' };
+    }
+
+    const permissionCheck = this.authService.canOperateBlockSection(
+      'virtual_' + fromStationId + '_' + toStationId,
+      fromStationId,
+      toStationId
+    );
+    if (!permissionCheck.allowed) {
+      this.triggerPermissionAlert('越权操作：闭塞请求', permissionCheck.reason || '无权限');
+      this.authService.recordViolation('block_request', 'canBlockRequest', `${fromStationId}→${toStationId}`, '闭塞请求', permissionCheck.reason || '无权限');
+      return { success: false, message: permissionCheck.reason };
+    }
+
+    const currentDispatcher = this.authService.getCurrentDispatcher();
     const request: BlockRequest = {
       id: `REQ${this.nextRequestId++}`,
       fromStationId,
@@ -949,20 +1327,72 @@ export class SimulationService implements OnDestroy {
     this.addDispatcherAction({
       type: 'block_request',
       data: { requestId: request.id, fromStationId, toStationId, trainId },
-      operator: 'station',
+      operator: currentDispatcher?.realName || 'station',
     });
 
-    return request;
+    this.recordAuditWithResult(
+      'block_request',
+      request.id,
+      `${fromStationId}→${toStationId}`,
+      'block',
+      'success',
+      { requestId: request.id, fromStationId, toStationId, trainId }
+    );
+
+    return { request, success: true };
   }
 
-  confirmBlockRequest(requestId: string, confirm: boolean): boolean {
+  confirmBlockRequest(requestId: string, confirm: boolean): { success: boolean; message?: string; pendingApproval?: OperationApproval } {
     const requests = this.blockRequestsSubject.value;
     const request = requests.find(r => r.id === requestId);
-    if (!request || request.status !== 'pending') return false;
+    if (!request || request.status !== 'pending') {
+      return { success: false, message: '请求不存在或状态不允许' };
+    }
+
+    const confirmPermission = this.authService.canConfirmBlockRequest();
+    if (!confirmPermission.allowed && confirm) {
+      this.triggerPermissionAlert(`越权操作：确认闭塞请求 ${requestId}`, confirmPermission.reason || '无权限');
+      this.authService.recordViolation('block_confirm', 'canBlockConfirm', requestId, `${request.fromStationId}→${request.toStationId}`, confirmPermission.reason || '无权限');
+      this.recordAuditWithResult('block_confirm', requestId, `${request.fromStationId}→${request.toStationId}`, 'block', 'blocked', { requestId, confirm }, confirmPermission.reason);
+      return { success: false, message: confirmPermission.reason };
+    }
+
+    const conflictCheck = this.auditService.checkConcurrentConflict(requestId, `${request.fromStationId}→${request.toStationId}`, 'block', 'block_confirm');
+    if (conflictCheck.conflict) {
+      this.recordAuditWithResult('block_confirm', requestId, `${request.fromStationId}→${request.toStationId}`, 'block', 'blocked', { requestId, confirm }, conflictCheck.reason);
+      return { success: false, message: conflictCheck.reason };
+    }
+
+    if (this.approvalService.requiresApproval('block_confirm') && confirm) {
+      const approvalResult = this.approvalService.submitForApproval({
+        actionType: 'block_confirm',
+        targetId: requestId,
+        targetName: `${request.fromStationId}→${request.toStationId}`,
+        targetType: 'block',
+        actionData: { requestId, confirm, fromStationId: request.fromStationId, toStationId: request.toStationId },
+      });
+      if (approvalResult.success && approvalResult.approval) {
+        this.recordAuditWithResult('block_confirm', requestId, `${request.fromStationId}→${request.toStationId}`, 'block', 'pending_approval', { requestId, confirm, approvalId: approvalResult.approval.id });
+        this.auditService.releaseOperation(requestId, 'block');
+        return { success: false, pendingApproval: approvalResult.approval, message: '操作已提交审批，请等待批准' };
+      }
+    }
+
+    return this.confirmBlockRequestInternal(requestId, confirm, false);
+  }
+
+  private confirmBlockRequestInternal(requestId: string, confirm: boolean, fromApproval: boolean): { success: boolean; message?: string } {
+    const requests = this.blockRequestsSubject.value;
+    const request = requests.find(r => r.id === requestId);
+    if (!request || request.status !== 'pending') {
+      this.auditService.releaseOperation(requestId, 'block');
+      return { success: false, message: '请求不存在或状态不允许' };
+    }
 
     request.status = confirm ? 'confirmed' : 'rejected';
     this.blockRequestsSubject.next([...requests]);
 
+    const currentDispatcher = this.authService.getCurrentDispatcher();
     const event: SimulationEvent = {
       timestamp: this.stateSubject.value.currentTime,
       type: 'block_confirm',
@@ -973,7 +1403,13 @@ export class SimulationService implements OnDestroy {
     this.addDispatcherAction({
       type: 'block_confirm',
       data: { requestId, confirmed: confirm },
-      operator: 'dispatcher',
+      operator: currentDispatcher?.realName || 'dispatcher',
+    });
+
+    this.recordAuditWithResult('block_confirm', requestId, `${request.fromStationId}→${request.toStationId}`, 'block', 'success', {
+      requestId,
+      confirm,
+      fromApproval,
     });
 
     if (confirm && request.trainId) {
@@ -983,7 +1419,8 @@ export class SimulationService implements OnDestroy {
       }
     }
 
-    return true;
+    this.auditService.releaseOperation(requestId, 'block');
+    return { success: true };
   }
 
   private addDispatcherAction(action: Omit<DispatcherAction, 'id' | 'timestamp'>): void {
@@ -1043,9 +1480,14 @@ export class SimulationService implements OnDestroy {
     this.railwayDataService.resetAll();
     this.routeControlService.resetAll();
     this.faultSimulationService.reset();
+    this.authService.reset();
+    this.approvalService.reset();
+    this.auditService.reset();
+    this.shiftHandoverService.reset();
     this.eventsSubject.next([]);
     this.dispatcherActionsSubject.next([]);
     this.blockRequestsSubject.next([]);
+    this.permissionAlertSubject.next(null);
 
     this.stateSubject.next({
       currentTime: 0,

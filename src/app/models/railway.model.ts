@@ -275,3 +275,237 @@ export interface FaultSimulationState {
   isRandomFaultsEnabled: boolean;
   randomFaultInterval: number;
 }
+
+export type DispatcherRole = 'station_dispatcher' | 'section_dispatcher' | 'chief_dispatcher';
+
+export interface RolePermission {
+  canSetRoute: boolean;
+  canCancelRoute: boolean;
+  canManualSignal: boolean;
+  canSwitchPosition: boolean;
+  canBlockRequest: boolean;
+  canBlockConfirm: boolean;
+  canEmergencyStop: boolean;
+  canTriggerFault: boolean;
+  canAcknowledgeFault: boolean;
+  canResolveFault: boolean;
+  canBlockSection: boolean;
+  canSpeedRestriction: boolean;
+  canManualRoute: boolean;
+  canShiftHandover: boolean;
+  canApprove: boolean;
+  canViewAudit: boolean;
+}
+
+export const ROLE_PERMISSIONS: Record<DispatcherRole, RolePermission> = {
+  station_dispatcher: {
+    canSetRoute: true,
+    canCancelRoute: true,
+    canManualSignal: true,
+    canSwitchPosition: true,
+    canBlockRequest: true,
+    canBlockConfirm: false,
+    canEmergencyStop: true,
+    canTriggerFault: false,
+    canAcknowledgeFault: true,
+    canResolveFault: false,
+    canBlockSection: false,
+    canSpeedRestriction: false,
+    canManualRoute: false,
+    canShiftHandover: true,
+    canApprove: false,
+    canViewAudit: false,
+  },
+  section_dispatcher: {
+    canSetRoute: true,
+    canCancelRoute: true,
+    canManualSignal: true,
+    canSwitchPosition: true,
+    canBlockRequest: true,
+    canBlockConfirm: true,
+    canEmergencyStop: true,
+    canTriggerFault: true,
+    canAcknowledgeFault: true,
+    canResolveFault: true,
+    canBlockSection: true,
+    canSpeedRestriction: true,
+    canManualRoute: true,
+    canShiftHandover: true,
+    canApprove: true,
+    canViewAudit: false,
+  },
+  chief_dispatcher: {
+    canSetRoute: true,
+    canCancelRoute: true,
+    canManualSignal: true,
+    canSwitchPosition: true,
+    canBlockRequest: true,
+    canBlockConfirm: true,
+    canEmergencyStop: true,
+    canTriggerFault: true,
+    canAcknowledgeFault: true,
+    canResolveFault: true,
+    canBlockSection: true,
+    canSpeedRestriction: true,
+    canManualRoute: true,
+    canShiftHandover: true,
+    canApprove: true,
+    canViewAudit: true,
+  },
+};
+
+export const ROLE_LABELS: Record<DispatcherRole, string> = {
+  station_dispatcher: '车站值班员',
+  section_dispatcher: '区间调度员',
+  chief_dispatcher: '总调度员',
+};
+
+export const ROLE_COLORS: Record<DispatcherRole, string> = {
+  station_dispatcher: '#2196f3',
+  section_dispatcher: '#ff9800',
+  chief_dispatcher: '#f44336',
+};
+
+export interface Dispatcher {
+  id: string;
+  username: string;
+  password: string;
+  realName: string;
+  role: DispatcherRole;
+  stationScope?: string[];
+  sectionScope?: string[];
+  isActive: boolean;
+  loginTime?: number;
+  lastActiveTime?: number;
+  avatarColor?: string;
+}
+
+export interface DispatcherSession {
+  dispatcher: Dispatcher;
+  loginTime: number;
+  sessionId: string;
+}
+
+export interface ShiftHandover {
+  id: string;
+  fromDispatcherId: string;
+  fromDispatcherName: string;
+  toDispatcherId: string;
+  toDispatcherName: string;
+  fromRole: DispatcherRole;
+  toRole: DispatcherRole;
+  handoverTime: number;
+  notes: string;
+  pendingItems: ShiftItem[];
+  status: 'pending' | 'completed' | 'cancelled';
+  confirmTime?: number;
+}
+
+export interface ShiftItem {
+  id: string;
+  type: 'route' | 'fault' | 'block_request' | 'other';
+  targetId: string;
+  targetName: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high';
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export type ApprovalActionType =
+  | 'set_route'
+  | 'cancel_route'
+  | 'manual_signal'
+  | 'switch_position'
+  | 'block_confirm'
+  | 'emergency_stop'
+  | 'trigger_fault'
+  | 'resolve_fault'
+  | 'block_section'
+  | 'unblock_section'
+  | 'speed_restriction'
+  | 'lift_speed_restriction'
+  | 'manual_route_setup';
+
+export interface OperationApproval {
+  id: string;
+  requestTime: number;
+  requestorId: string;
+  requestorName: string;
+  requestorRole: DispatcherRole;
+  approverId?: string;
+  approverName?: string;
+  approverRole?: DispatcherRole;
+  actionType: ApprovalActionType;
+  targetId: string;
+  targetName: string;
+  targetType: 'signal' | 'switch' | 'route' | 'block' | 'fault' | 'train';
+  actionData: any;
+  status: ApprovalStatus;
+  decisionTime?: number;
+  rejectReason?: string;
+  conflictInfo?: ConflictAlert;
+}
+
+export type AuditActionResult = 'success' | 'failed' | 'blocked' | 'pending_approval';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: number;
+  simTime: number;
+  operatorId: string;
+  operatorName: string;
+  operatorRole: DispatcherRole;
+  actionType: string;
+  targetId: string;
+  targetName: string;
+  targetType: string;
+  result: AuditActionResult;
+  details: any;
+  rejectionReason?: string;
+  approverId?: string;
+  approverName?: string;
+  approvalTime?: number;
+  sessionId?: string;
+}
+
+export interface PermissionViolation {
+  operatorId: string;
+  operatorName: string;
+  operatorRole: DispatcherRole;
+  actionType: string;
+  requiredPermission: string;
+  targetId: string;
+  targetName: string;
+  reason: string;
+  timestamp: number;
+  simTime: number;
+}
+
+export interface ConcurrentConflict {
+  id: string;
+  timestamp: number;
+  simTime: number;
+  targetId: string;
+  targetName: string;
+  targetType: string;
+  firstOperatorId: string;
+  firstOperatorName: string;
+  secondOperatorId: string;
+  secondOperatorName: string;
+  actionType: string;
+  blockedOperatorId: string;
+  reason: string;
+}
+
+export interface MultiDispatcherState {
+  activeDispatchers: DispatcherSession[];
+  currentDispatcherId: string | null;
+  shiftHandovers: ShiftHandover[];
+  pendingApprovals: OperationApproval[];
+  auditLogs: AuditLogEntry[];
+  permissionViolations: PermissionViolation[];
+  concurrentConflicts: ConcurrentConflict[];
+}
+
+export type AuthPermissionKey = keyof RolePermission;

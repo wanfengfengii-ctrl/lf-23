@@ -10,8 +10,49 @@
   font-weight: 500;
 }
 
+.current-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 4px 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 30px;
+  border: 2px solid transparent;
+  margin-left: 16px;
+
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+  }
+
+  .user-info {
+    .user-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: white;
+      line-height: 1.2;
+    }
+    .user-role {
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 500;
+    }
+  }
+}
+
 .spacer {
   flex: 1 1 auto;
+}
+
+.active-btn {
+  background: rgba(255, 255, 255, 0.15) !important;
 }
 
 .app-container {
@@ -59,30 +100,21 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 340px;
+  width: 380px;
   flex-shrink: 0;
   padding: 16px 16px 16px 0;
   overflow-y: auto;
 }
 
-.dispatcher-panel,
-.config-panel {
+.panel-wrapper {
   background: white;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   flex-shrink: 0;
-}
-
-.dispatcher-panel {
-  flex: 1;
-  min-height: 400px;
+  max-height: 420px;
   display: flex;
   flex-direction: column;
-}
-
-.config-panel {
-  max-height: 400px;
-  overflow-y: auto;
+  min-height: 260px;
 }
 
