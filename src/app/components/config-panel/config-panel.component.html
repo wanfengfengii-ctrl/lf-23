@@ -191,6 +191,14 @@
           </mat-select>
         </mat-form-field>
 
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>运行方向</mat-label>
+          <mat-select [(ngModel)]="newRouteDirection">
+            <mat-option value="forward">正向（起始→终到）</mat-option>
+            <mat-option value="backward">反向（终到→起始）</mat-option>
+          </mat-select>
+        </mat-form-field>
+
         <button 
           mat-raised-button 
           color="primary" 

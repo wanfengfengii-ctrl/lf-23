@@ -57,6 +57,26 @@ export class RouteControlService {
     this.routesSubject.next(routes);
   }
 
+  removeRoutesByBlockSection(blockSectionId: string): string[] {
+    const routesToRemove = this.routesSubject.value.filter(r =>
+      r.blockSectionIds.includes(blockSectionId)
+    );
+    const removedIds = routesToRemove.map(r => r.id);
+
+    routesToRemove.forEach(route => {
+      if (route.state !== 'idle') {
+        this.cancelRoute(route.id);
+      }
+    });
+
+    const routes = this.routesSubject.value.filter(r =>
+      !r.blockSectionIds.includes(blockSectionId)
+    );
+    this.routesSubject.next(routes);
+
+    return removedIds;
+  }
+
   setRoute(routeId: string): { success: boolean; conflict?: ConflictAlert } {
     const route = this.getRouteById(routeId);
     if (!route) {
@@ -430,11 +450,60 @@ export class RouteControlService {
     }
   }
 
-  setSignalManual(signalId: string, state: 'clear' | 'stop'): boolean {
+  setSignalManual(signalId: string, state: 'clear' | 'stop'): { success: boolean; message?: string } {
     const signals = this.railwayDataService.getSignals();
     const signal = signals.find(s => s.id === signalId);
 
-    if (!signal) return false;
+    if (!signal) return { success: false, message: '信号机不存在' };
+
+    if (state === 'clear') {
+      const blocks = this.railwayDataService.getBlockSections();
+      const switches = this.railwayDataService.getSwitches();
+
+      if (signal.position === 'exit') {
+        const block = blocks.find(b => b.id === signal.blockSectionId);
+        if (block && block.isOccupied) {
+          return { success: false, message: '前方区间占用，无法开放信号' };
+        }
+      }
+
+      if (signal.position === 'entry') {
+        const stationId = signal.stationId;
+        const stationRoutes = this.routesSubject.value.filter(route => {
+          const endSignal = signals.find(s => s.id === route.endSignalId);
+          return endSignal && endSignal.id === signalId;
+        });
+
+        if (stationRoutes.length > 0) {
+          const hasSetupRoute = stationRoutes.some(r => r.state === 'setup' || r.state === 'locked');
+          if (!hasSetupRoute) {
+            const block = blocks.find(b => b.id === signal.blockSectionId);
+            if (block && block.isOccupied) {
+              return { success: false, message: '接车区间占用，无法开放信号' };
+            }
+          }
+        } else {
+          const block = blocks.find(b => b.id === signal.blockSectionId);
+          if (block && block.isOccupied) {
+            return { success: false, message: '接车区间占用，无法开放信号' };
+          }
+        }
+      }
+
+      const relatedSwitches = switches.filter(
+        sw => sw.commonBlockId === signal.blockSectionId ||
+             sw.normalBlockId === signal.blockSectionId ||
+             sw.reverseBlockId === signal.blockSectionId
+      );
+      for (const sw of relatedSwitches) {
+        if (sw.isLocked) {
+          const currentBlockId = sw.position === 'normal' ? sw.normalBlockId : sw.reverseBlockId;
+          if (signal.blockSectionId !== sw.commonBlockId && signal.blockSectionId !== currentBlockId) {
+            return { success: false, message: `道岔「${sw.name}」位置不符，无法开放信号` };
+          }
+        }
+      }
+    }
 
     this.railwayDataService.updateSignal({
       ...signal,
@@ -442,7 +511,7 @@ export class RouteControlService {
       isManualMode: true,
     });
 
-    return true;
+    return { success: true };
   }
 
   findRoutesForTrain(

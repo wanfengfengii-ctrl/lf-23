@@ -62,6 +62,7 @@ export class ConfigPanelComponent implements OnInit, OnDestroy {
   newRouteName = '';
   newRouteStartSignal = '';
   newRouteEndSignal = '';
+  newRouteDirection: 'forward' | 'backward' = 'forward';
 
   newScheduleName = '';
   newScheduleStartStation = '';
@@ -189,6 +190,7 @@ export class ConfigPanelComponent implements OnInit, OnDestroy {
   }
 
   removeBlockSection(blockId: string): void {
+    this.routeControlService.removeRoutesByBlockSection(blockId);
     this.railwayDataService.removeBlockSection(blockId);
   }
 
@@ -241,26 +243,38 @@ export class ConfigPanelComponent implements OnInit, OnDestroy {
 
     if (!startSignal || !endSignal) return;
 
+    const fromStationId = this.newRouteDirection === 'forward' 
+      ? startSignal.stationId 
+      : endSignal.stationId;
+    const toStationId = this.newRouteDirection === 'forward'
+      ? endSignal.stationId
+      : startSignal.stationId;
+
     const path = this.railwayDataService.findPath(
-      startSignal.stationId,
-      endSignal.stationId
+      fromStationId,
+      toStationId
     );
 
     if (!path) return;
 
     this.routeControlService.addRoute({
       name: this.newRouteName.trim(),
-      startSignalId: this.newRouteStartSignal,
-      endSignalId: this.newRouteEndSignal,
+      startSignalId: this.newRouteDirection === 'forward' 
+        ? this.newRouteStartSignal 
+        : this.newRouteEndSignal,
+      endSignalId: this.newRouteDirection === 'forward'
+        ? this.newRouteEndSignal
+        : this.newRouteStartSignal,
       blockSectionIds: path.blocks,
       switchIds: path.switches.map(s => s.switchId),
       switchPositions: path.switches,
-      direction: 'forward',
+      direction: this.newRouteDirection,
     });
 
     this.newRouteName = '';
     this.newRouteStartSignal = '';
     this.newRouteEndSignal = '';
+    this.newRouteDirection = 'forward';
   }
 
   removeRoute(routeId: string): void {

@@ -729,10 +729,10 @@ export class SimulationService implements OnDestroy {
     return success;
   }
 
-  setSignalManual(signalId: string, state: 'clear' | 'stop'): boolean {
-    const success = this.routeControlService.setSignalManual(signalId, state);
+  setSignalManual(signalId: string, state: 'clear' | 'stop'): { success: boolean; message?: string } {
+    const result = this.routeControlService.setSignalManual(signalId, state);
 
-    if (success) {
+    if (result.success) {
       const event: SimulationEvent = {
         timestamp: this.stateSubject.value.currentTime,
         type: 'manual_signal',
@@ -749,7 +749,7 @@ export class SimulationService implements OnDestroy {
       this.checkWaitingTrains();
     }
 
-    return success;
+    return result;
   }
 
   setSwitchPosition(switchId: string, position: 'normal' | 'reverse'): boolean {

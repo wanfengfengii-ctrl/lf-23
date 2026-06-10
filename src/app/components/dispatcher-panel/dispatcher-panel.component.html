@@ -131,6 +131,35 @@
 
     <mat-tab label="闭塞请求">
       <div class="tab-content">
+        <div class="request-form">
+          <h4>发起闭塞请求</h4>
+          <div class="form-row">
+            <mat-form-field appearance="outline" class="full-width">
+              <mat-label>目标车站</mat-label>
+              <mat-select [(ngModel)]="selectedTargetStationId">
+                <mat-option
+                  *ngFor="let station of getAvailableTargetStations()"
+                  [value]="station.id"
+                >
+                  {{ station.name }}
+                </mat-option>
+              </mat-select>
+            </mat-form-field>
+          </div>
+          <button
+            mat-raised-button
+            color="primary"
+            (click)="onRequestBlock()"
+            [disabled]="!selectedTargetStationId"
+          >
+            <mat-icon>send</mat-icon>
+            发送请求
+          </button>
+        </div>
+
+        <mat-divider></mat-divider>
+
+        <h4>待处理请求 ({{ getPendingRequests().length }})</h4>
         <div class="request-list">
           <div
             *ngFor="let request of getPendingRequests()"

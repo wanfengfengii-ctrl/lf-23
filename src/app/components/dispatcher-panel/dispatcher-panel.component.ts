@@ -7,6 +7,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import {
   Route,
@@ -32,6 +35,9 @@ import { SimulationService } from '../../services/simulation.service';
     MatDividerModule,
     MatBadgeModule,
     MatTooltipModule,
+    MatSelectModule,
+    MatFormFieldModule,
+    FormsModule,
   ],
   templateUrl: './dispatcher-panel.component.html',
   styleUrls: ['./dispatcher-panel.component.scss'],
@@ -45,6 +51,7 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
   dispatcherActions: DispatcherAction[] = [];
 
   selectedStationId = '';
+  selectedTargetStationId = '';
 
   private subscriptions: Subscription[] = [];
 
@@ -115,7 +122,10 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
     if (!signal) return;
 
     const newState = signal.state === 'clear' ? 'stop' : 'clear';
-    this.simulationService.setSignalManual(signalId, newState);
+    const result = this.simulationService.setSignalManual(signalId, newState);
+    if (!result.success && result.message) {
+      alert(result.message);
+    }
   }
 
   onToggleSwitch(switchId: string): void {
@@ -128,6 +138,21 @@ export class DispatcherPanelComponent implements OnInit, OnDestroy {
 
   onConfirmRequest(requestId: string, confirm: boolean): void {
     this.simulationService.confirmBlockRequest(requestId, confirm);
+  }
+
+  onRequestBlock(): void {
+    if (!this.selectedStationId || !this.selectedTargetStationId) return;
+    if (this.selectedStationId === this.selectedTargetStationId) return;
+
+    this.simulationService.requestBlock(
+      this.selectedStationId,
+      this.selectedTargetStationId
+    );
+    this.selectedTargetStationId = '';
+  }
+
+  getAvailableTargetStations(): Station[] {
+    return this.stations.filter(s => s.id !== this.selectedStationId);
   }
 
   getRouteStatusClass(state: string): string {
