@@ -44,9 +44,16 @@ export class SimulationService implements OnDestroy {
   }
 
   start(): void {
-    if (this.stateSubject.value.isRunning) return;
+    const state = this.stateSubject.value;
 
-    if (this.stateSubject.value.mode === 'live') {
+    if (state.isRunning && state.isPaused) {
+      this.resume();
+      return;
+    }
+
+    if (state.isRunning) return;
+
+    if (state.mode === 'live') {
       this.initializeLiveSimulation();
     }
 
@@ -241,12 +248,13 @@ export class SimulationService implements OnDestroy {
     );
 
     if (!nextBlock) {
-      const event: SimulationEvent = {
-        timestamp: this.stateSubject.value.currentTime,
-        type: 'conflict_detected',
-        data: { trainId, message: '无可用线路' },
+      const stationName = this.railwayDataService.getStationById(train.currentStationId)?.name || train.currentStationId;
+      const conflict: ConflictAlert = {
+        message: `线路冲突：列车「${train.name}」在 ${stationName} 站找不到${train.direction === 'forward' ? '正向' : '反向'}可用线路`,
+        type: 'invalid_route',
+        trainId: trainId,
       };
-      this.addEvent(event);
+      this.triggerConflict(conflict);
       return;
     }
 
@@ -424,13 +432,10 @@ export class SimulationService implements OnDestroy {
     const state = this.stateSubject.value;
     if (!state.isRunning || !state.isPaused) return;
 
-    if (state.conflictAlert) {
-      return;
-    }
-
     this.stateSubject.next({
       ...state,
       isPaused: false,
+      conflictAlert: undefined,
     });
   }
 
@@ -530,19 +535,34 @@ export class SimulationService implements OnDestroy {
 
   seekTo(time: number): void {
     const state = this.stateSubject.value;
+    const clampedTime = Math.max(0, time);
 
     if (state.mode === 'playback') {
-      const recording = this.playbackService.getStateAtTime(time);
+      const recording = this.playbackService.getStateAtTime(clampedTime);
       if (recording) {
         this.railwayDataService.setTrains(recording.trains);
         this.railwayDataService.setBlockSections(recording.blocks);
         this.railwayDataService.setSignals(recording.signals);
       }
+    } else if (state.mode === 'live' && this.playbackService.hasRecording()) {
+      const recording = this.playbackService.getStateAtTime(clampedTime);
+      if (recording) {
+        this.railwayDataService.setTrains(recording.trains);
+        this.railwayDataService.setBlockSections(recording.blocks);
+        this.railwayDataService.setSignals(recording.signals);
+      }
+      this.stateSubject.next({
+        ...state,
+        currentTime: clampedTime,
+        isPaused: true,
+        conflictAlert: undefined,
+      });
+      return;
     }
 
     this.stateSubject.next({
       ...state,
-      currentTime: time,
+      currentTime: clampedTime,
     });
   }
 

@@ -187,6 +187,16 @@ export class RailwayDataService {
       b => b.fromStationId !== stationId && b.toStationId !== stationId
     );
     this.blockSectionsSubject.next(blocks);
+
+    const schedules = this.schedulesSubject.value.filter(
+      s => s.startStationId !== stationId && s.endStationId !== stationId
+    );
+    this.schedulesSubject.next(schedules);
+
+    const trains = this.trainsSubject.value.filter(
+      t => t.currentStationId !== stationId
+    );
+    this.trainsSubject.next(trains);
   }
 
   addBlockSection(block: Omit<BlockSection, 'id' | 'isOccupied'>): BlockSection {
