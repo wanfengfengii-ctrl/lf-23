@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/co
 import { CommonModule } from '@angular/common';
 import * as d3 from 'd3';
 import { Subscription } from 'rxjs';
-import { SimulationState, TrainSchedule, SimulationEvent } from '../../models/railway.model';
+import { SimulationState, TrainSchedule, SimulationEvent, SpeedRestriction } from '../../models/railway.model';
 import { SimulationService } from '../../services/simulation.service';
 import { RailwayDataService } from '../../services/railway-data.service';
 import { PlaybackService } from '../../services/playback.service';
@@ -27,6 +27,7 @@ export class TimelineComponent implements OnInit, OnDestroy {
 
   private subscriptions: Subscription[] = [];
   private currentTime = 0;
+  private speedRestrictions: SpeedRestriction[] = [];
 
   constructor(
     private simulationService: SimulationService,
@@ -58,7 +59,9 @@ export class TimelineComponent implements OnInit, OnDestroy {
     );
 
     this.subscriptions.push(
-      this.faultSimulationService.state$.subscribe(() => {
+      this.faultSimulationService.state$.subscribe((state) => {
+        this.speedRestrictions = state.speedRestrictions;
+        this.updateTimeline();
         this.updateFaultMarkers();
       })
     );
@@ -207,7 +210,7 @@ export class TimelineComponent implements OnInit, OnDestroy {
 
   private estimateDuration(schedule: TrainSchedule): number {
     const blocks = this.railwayDataService.getBlockSections();
-    let totalLength = 0;
+    let totalDuration = 0;
 
     let currentStationId = schedule.startStationId;
     const direction = schedule.direction;
@@ -222,7 +225,9 @@ export class TimelineComponent implements OnInit, OnDestroy {
       );
 
       if (nextBlock) {
-        totalLength += nextBlock.length;
+        const speedRestriction = this.speedRestrictions.find(sr => sr.blockSectionId === nextBlock.id);
+        const effectiveSpeed = speedRestriction ? Math.min(schedule.speed, speedRestriction.maxSpeed) : schedule.speed;
+        totalDuration += nextBlock.length / effectiveSpeed;
         currentStationId = direction === 'forward' ? nextBlock.toStationId : nextBlock.fromStationId;
       } else {
         break;
@@ -230,7 +235,7 @@ export class TimelineComponent implements OnInit, OnDestroy {
       iterations++;
     }
 
-    return schedule.speed > 0 ? totalLength / schedule.speed : 10;
+    return totalDuration > 0 ? totalDuration : 10;
   }
 
   private updatePlayhead(): void {

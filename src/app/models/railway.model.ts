@@ -219,6 +219,7 @@ export interface Fault {
   affectedBlockIds: string[];
   affectedTrainIds: string[];
   isRandom: boolean;
+  data?: any;
 }
 
 export interface FaultAction {

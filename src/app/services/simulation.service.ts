@@ -322,6 +322,7 @@ export class SimulationService implements OnDestroy {
   private updateTrains(deltaSeconds: number): void {
     const trains = this.railwayDataService.getTrains();
     const blocks = this.railwayDataService.getBlockSections();
+    const speedRestrictions = this.faultSimulationService.getState().speedRestrictions;
 
     trains.forEach(train => {
       if (train.state !== 'running' || !train.currentBlockSectionId) {
@@ -331,7 +332,10 @@ export class SimulationService implements OnDestroy {
       const block = blocks.find(b => b.id === train.currentBlockSectionId);
       if (!block) return;
 
-      const distanceToMove = train.speed * deltaSeconds;
+      const speedRestriction = speedRestrictions.find(sr => sr.blockSectionId === block.id);
+      const effectiveSpeed = speedRestriction ? Math.min(train.speed, speedRestriction.maxSpeed) : train.speed;
+
+      const distanceToMove = effectiveSpeed * deltaSeconds;
       let newProgress = train.progress + distanceToMove;
 
       if (newProgress >= block.length) {
@@ -1154,32 +1158,17 @@ export class SimulationService implements OnDestroy {
         if (recording.faultState)
           this.faultSimulationService.setState(recording.faultState);
       }
-    } else if (state.mode === 'live' && this.playbackService.hasRecording()) {
-      const recording = this.playbackService.getStateAtTime(clampedTime);
-      if (recording) {
-        this.railwayDataService.setTrains(recording.trains);
-        this.railwayDataService.setBlockSections(recording.blocks);
-        this.railwayDataService.setSignals(recording.signals);
-        if (recording.switches) this.railwayDataService.setSwitches(recording.switches);
-        if (recording.routes) this.routeControlService.setRoutes(recording.routes);
-        if (recording.dispatcherActions)
-          this.dispatcherActionsSubject.next(recording.dispatcherActions);
-        if (recording.faultState)
-          this.faultSimulationService.setState(recording.faultState);
-      }
       this.stateSubject.next({
         ...state,
         currentTime: clampedTime,
-        isPaused: true,
         conflictAlert: undefined,
       });
-      return;
+    } else if (state.mode === 'live') {
+      this.stateSubject.next({
+        ...state,
+        currentTime: clampedTime,
+      });
     }
-
-    this.stateSubject.next({
-      ...state,
-      currentTime: clampedTime,
-    });
   }
 
   switchToLive(): void {

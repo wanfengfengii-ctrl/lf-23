@@ -250,6 +250,10 @@ export class FaultSimulationService {
       affectedBlockIds: affectedBlocks,
       affectedTrainIds: [trainId],
       isRandom,
+      data: {
+        originalSpeed: train.speed,
+        originalState: train.state,
+      },
     };
 
     this.addFault(fault);
@@ -859,9 +863,11 @@ export class FaultSimulationService {
       case 'train_emergency_stop': {
         const train = this.railwayDataService.getTrainById(fault.targetId);
         if (train && train.state === 'stopped') {
+          const originalSpeed = fault.data?.originalSpeed ?? 60;
           this.railwayDataService.updateTrain({
             ...train,
             state: 'waiting',
+            speed: originalSpeed,
           });
         }
         break;
